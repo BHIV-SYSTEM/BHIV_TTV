@@ -35,24 +35,6 @@ from training.datasets.loader import create_dataloader
 
 router = APIRouter()
 
-# Ensure bundled 120 manifest JSONL is materialized if absent
-def _ensure_manifest_120_jsonl():
-    jsonl_p = settings.get_absolute_path("data/manifests/ttv_training_manifest_120.jsonl")
-    if not jsonl_p.exists():
-        json_p = settings.get_absolute_path("data/manifests/ttv_training_manifest_120.json")
-        if json_p.exists():
-            try:
-                records, _ = parse_manifest_records(json_p)
-                if records:
-                    jsonl_p.parent.mkdir(parents=True, exist_ok=True)
-                    with open(jsonl_p, "w", encoding="utf-8") as f:
-                        for r in records:
-                            f.write(json.dumps(r) + "\n")
-            except Exception as e:
-                logger.warning(f"Failed to auto-generate 120 jsonl manifest: {e}")
-
-_ensure_manifest_120_jsonl()
-
 # In-memory training sessions registry for backward-compatible /start workflow
 _TRAINING_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
@@ -233,10 +215,39 @@ async def launch_or_queue_training_job(
             )
             if ref_payload:
                 ref_manifest_path = str(settings.get_absolute_path("training/datasets/reference_train_manifest.jsonl"))
-                prepare_reference_dataset_entry(ref_payload, output_manifest_path=ref_manifest_path)
-                if not manifest_raw:
+                ref_sample = prepare_reference_dataset_entry(ref_payload, output_manifest_path=ref_manifest_path)
+                if manifest_raw:
+                    try:
+                        custom_records, _ = parse_manifest_records(manifest_raw)
+                    except Exception as parse_err:
+                        raise HTTPException(status_code=400, detail=f"Failed to parse custom manifest: {parse_err}")
+
+                    # Check for duplicates
+                    ref_id = ref_payload.get("reference_id")
+                    sample_id = ref_sample.get("id")
+                    media_path = str(Path(ref_sample.get("video_path", "")).resolve()) if ref_sample.get("video_path") else ""
+
+                    already_exists = False
+                    for r in custom_records:
+                        r_id = r.get("id")
+                        r_ref_id = r.get("metadata", {}).get("reference_id") if isinstance(r.get("metadata"), dict) else None
+                        r_path = str(Path(r.get("video_path", "")).resolve()) if r.get("video_path") else ""
+
+                        if (sample_id and r_id == sample_id) or (ref_id and r_ref_id == ref_id) or (media_path and r_path == media_path):
+                            already_exists = True
+                            break
+
+                    if not already_exists:
+                        # Prepend reference entry as priority sample alongside custom records
+                        manifest_raw = [ref_sample] + list(custom_records)
+                    else:
+                        manifest_raw = list(custom_records)
+                    manifest_filename = f"combined_{manifest_filename}" if manifest_filename else "combined_manifest.jsonl"
+                else:
                     manifest_raw = ref_manifest_path
                     manifest_filename = "reference_train_manifest.jsonl"
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Could not resolve reference media: {e}")
 
