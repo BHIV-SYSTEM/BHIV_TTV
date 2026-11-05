@@ -1321,109 +1321,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (startTrainingBtn) {
         startTrainingBtn.addEventListener("click", async () => {
-<<<<<<< HEAD
-            const epochs = parseInt(document.getElementById("train-epochs")?.value || "10", 10);
-            const lr = document.getElementById("train-lr")?.value || "0.0001";
-            const batchSize = parseInt(document.getElementById("train-batch-size")?.value || "2", 10);
-=======
             const epochs = document.getElementById("train-epochs")?.value || "10";
             const lr = document.getElementById("train-lr")?.value || "0.0001";
             const batchSize = document.getElementById("train-batch-size")?.value || "2";
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
             const method = document.getElementById("train-method")?.value || "lora";
             const baseModel = document.getElementById("train-base-model")?.value || "SpatialTemporalTTVModel";
 
             startTrainingBtn.disabled = true;
-<<<<<<< HEAD
-            trainingSessionStatus.textContent = "Session Active";
-            trainingSessionStatus.className = "badge badge-success";
-
-            function appendLog(text, cssClass = "text-muted") {
-                if (!trainingTerminalLog) return;
-                const logLine = document.createElement("div");
-                logLine.className = `log-line ${cssClass}`;
-                logLine.textContent = text;
-                trainingTerminalLog.appendChild(logLine);
-                trainingTerminalLog.scrollTop = trainingTerminalLog.scrollHeight;
-            }
-
-            appendLog(`[Launch] Initializing Fine-Tuning: method=${method}, epochs=${epochs}, lr=${lr}, batch=${batchSize}`, "text-accent");
-            if (trainReferenceState.referenceId || trainReferenceState.referenceUrl) {
-                appendLog(`[Reference] Attached reference: id=${trainReferenceState.referenceId || "none"}, url=${trainReferenceState.referenceUrl || "none"}, type=${trainReferenceState.referenceType || "auto"}`, "text-accent");
-                appendLog(`[Dataset] Ingesting reference into model training pipeline...`, "text-muted");
-            }
-
-            try {
-                const payload = {
-                    base_model: baseModel,
-                    method: method,
-                    epochs: epochs,
-                    learning_rate: lr,
-                    batch_size: batchSize,
-                    reference_id: trainReferenceState.referenceId,
-                    reference_url: trainReferenceState.referenceUrl,
-                    reference_type: trainReferenceState.referenceType
-                };
-
-                const res = await fetch("/api/v1/training/start", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.message || errData.detail || "Failed to start training session");
-                }
-
-                const data = await res.json();
-                if (Array.isArray(data.logs)) {
-                    data.logs.forEach(l => appendLog(l, "text-muted"));
-                }
-
-                showToast("Training session launched with reference!", "success", 4000);
-
-                // Poll for training job updates
-                const pollTimer = setInterval(async () => {
-                    try {
-                        const statusRes = await fetch(`/api/v1/training/status/${data.job_id}`);
-                        if (!statusRes.ok) return;
-                        const statusData = await statusRes.json();
-                        if (statusData.status === "completed") {
-                            clearInterval(pollTimer);
-                            startTrainingBtn.disabled = false;
-                            trainingSessionStatus.textContent = "Completed";
-                            trainingSessionStatus.className = "badge badge-success";
-                            if (Array.isArray(statusData.logs)) {
-                                statusData.logs.slice(data.logs.length).forEach(l => appendLog(l, "text-accent"));
-                            }
-                            showToast("Training session completed successfully!", "success", 5000);
-                        } else if (statusData.status === "failed") {
-                            clearInterval(pollTimer);
-                            startTrainingBtn.disabled = false;
-                            trainingSessionStatus.textContent = "Failed";
-                            trainingSessionStatus.className = "badge badge-danger";
-                            appendLog(`[Error] Training job failed.`, "text-accent");
-                            showToast("Training job encountered an error.", "error", 5000);
-                        }
-                    } catch (e) {
-                        // ignore network blips during polling
-                    }
-                }, 1500);
-
-            } catch (err) {
-                appendLog(`[Error] ${err.message}`, "text-accent");
-                trainingSessionStatus.textContent = "Failed";
-                trainingSessionStatus.className = "badge badge-danger";
-                startTrainingBtn.disabled = false;
-                showToast(err.message, "error", 5000);
-=======
             if (startTrainingBtnText) startTrainingBtnText.textContent = "Submitting Job...";
 
             setTrainingBadge("queued", "job queued");
 
             trainingTerminalLog.innerHTML = "";
             appendTerminalLog(`[Launch] Preparing Fine-Tuning Job (Base: ${baseModel}, Method: ${method}, Epochs: ${epochs}, LR: ${lr}, Batch: ${batchSize})...`, "text-accent");
+
+            if (typeof trainReferenceState !== "undefined" && trainReferenceState && (trainReferenceState.referenceId || trainReferenceState.referenceUrl)) {
+                appendTerminalLog(`[Reference] Attached reference: id=${trainReferenceState.referenceId || "none"}, url=${trainReferenceState.referenceUrl || "none"}, type=${trainReferenceState.referenceType || "auto"}`, "text-accent");
+                appendTerminalLog(`[Dataset] Ingesting reference into model training pipeline...`, "text-muted");
+            }
 
             try {
                 const formData = new FormData();
@@ -1432,6 +1347,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 formData.append("epochs", epochs);
                 formData.append("learning_rate", lr);
                 formData.append("batch_size", batchSize);
+
+                if (typeof trainReferenceState !== "undefined" && trainReferenceState) {
+                    if (trainReferenceState.referenceId) {
+                        formData.append("reference_id", trainReferenceState.referenceId);
+                    }
+                    if (trainReferenceState.referenceUrl) {
+                        formData.append("reference_url", trainReferenceState.referenceUrl);
+                    }
+                    if (trainReferenceState.referenceType) {
+                        formData.append("reference_type", trainReferenceState.referenceType);
+                    }
+                }
 
                 if (selectedManifestFile) {
                     formData.append("manifest_file", selectedManifestFile);
@@ -1488,7 +1415,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 showToast(`Launch failed: ${err.message}`, "error");
                 startTrainingBtn.disabled = false;
                 if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
             }
         });
     }

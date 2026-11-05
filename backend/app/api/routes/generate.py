@@ -2,18 +2,18 @@ import asyncio
 from fastapi import APIRouter, UploadFile, File, Form
 from typing import Optional
 
-<<<<<<< HEAD
-from app.schemas.request import GenerationRequest, ReferenceProcessRequest, SUPPORTED_STYLES
+from app.schemas.request import (
+    GenerationRequest,
+    GenerationDebugRequest,
+    ReferenceProcessRequest,
+    SUPPORTED_STYLES,
+)
 from app.schemas.response import (
     GenerationResponse,
     GenerationSettings,
     ReferenceUploadResponse,
     ReferenceDetailResponse,
 )
-=======
-from app.schemas.request import GenerationRequest, GenerationDebugRequest, SUPPORTED_STYLES
-from app.schemas.response import GenerationResponse, GenerationSettings, ReferenceUploadResponse
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
 from app.core.queue import job_manager
 from app.pipelines.text_to_video import pipeline
 from app.utils.hashing import generate_execution_id
