@@ -77,7 +77,7 @@ class DatasetValidator:
     - Duplicate detection (video SHA-256 and prompt matching)
     - Metadata consistency
     """
-    def __init__(self, min_duration: float = 1.0, max_duration: float = 120.0, min_prompt_len: int = 5):
+    def __init__(self, min_duration: float = 0.1, max_duration: float = 3600.0, min_prompt_len: int = 5):
         self.min_duration = min_duration
         self.max_duration = max_duration
         self.min_prompt_len = min_prompt_len

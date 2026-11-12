@@ -55,6 +55,8 @@ class ReferenceService:
             inspected = validate_media_file(
                 str(dest_path),
                 max_bytes=settings.REFERENCE_MAX_BYTES,
+            max_duration=settings.REFERENCE_MAX_DURATION,
+                max_duration=settings.REFERENCE_MAX_DURATION,
             )
             media_type = "image" if ext in ALLOWED_IMAGE_EXT else "video"
             if inspected["media_type"] != media_type:
@@ -78,6 +80,7 @@ class ReferenceService:
         inspected = validate_media_file(
             retrieved["path"],
             max_bytes=settings.REFERENCE_MAX_BYTES,
+            max_duration=settings.REFERENCE_MAX_DURATION,
         )
         if inspected["media_type"] != retrieved["media_type"]:
             raise ValidationError("The downloaded file's media format did not match its metadata.")

@@ -6,9 +6,10 @@ Uses HuggingFace diffusers WanImageToVideoPipeline (Wan-AI/Wan2.2-TI2V-5B-Diffus
 Hardware requirements
 ---------------------
 * NVIDIA GPU with CUDA is REQUIRED for inference.
-* This adapter cannot run on CPU or Intel/AMD integrated graphics.
+* Wan 2.2 TI2V-5B has ~5 Billion parameters (Diffusion Transformer).
+* Minimum 14 GB VRAM required (24 GB recommended for 720p).
 * On a local machine without NVIDIA GPU, a clear VisualGenerationError is raised.
-* Inference is intended to run on a cloud NVIDIA GPU (e.g. RunPod, Lambda Labs, Colab Pro).
+* Inference is intended to run on the company NVIDIA GPU server.
 
 Cloud deployment
 ----------------
@@ -24,16 +25,17 @@ The model is loaded lazily on the first request — NOT at application startup.
 Supported modes
 ---------------
 * Image-to-Video (primary): uses scene keyframe image + text prompt
-* Text-to-Video (fallback): synthesises a neutral background PIL image from the
-  scene's visual description when no keyframe image is available.
+* Text-to-Video (supported): synthesises an evocative cinematic background image
+  derived from scene visual description and lighting prompts when no keyframe image is available.
 """
 
 from __future__ import annotations
 
 import os
+import json
 import logging
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, List, Dict, Any
 
 import numpy as np
 
@@ -44,8 +46,7 @@ from app.core.logging import telemetry, logger
 from app.core.exceptions import VisualGenerationError
 
 # torch is imported at module level so tests can mock torch.cuda.is_available.
-# If torch is not installed, the ImportError is surfaced at inference time
-# (inside generate_scene_video) rather than at application startup.
+# If torch is not installed, the ImportError is surfaced at inference time.
 try:
     import torch as _torch
     _TORCH_AVAILABLE = True
@@ -57,9 +58,8 @@ if TYPE_CHECKING:
     from diffusers import WanImageToVideoPipeline  # noqa: F401 — type hint only
 
 
-
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers & Compatibility Verification
 # ---------------------------------------------------------------------------
 
 _CUDA_ERROR_MESSAGE = (
@@ -90,44 +90,154 @@ def _check_cuda_available() -> None:
         raise VisualGenerationError(_CUDA_ERROR_MESSAGE)
 
 
+def _verify_hardware_and_vram(device_str: str) -> None:
+    """
+    Verifies CUDA availability and checks available VRAM against Wan 2.2 requirements.
+    Wan 2.2 TI2V-5B is a 5-billion parameter Diffusion Transformer requiring at least
+    14 GB VRAM for inference (24 GB recommended for 720p).
+    """
+    _check_cuda_available()
+
+    try:
+        device_idx = 0
+        if ":" in device_str:
+            try:
+                device_idx = int(device_str.split(":")[1])
+            except Exception:
+                device_idx = 0
+
+        gpu_count = _torch.cuda.device_count()
+        if device_idx >= gpu_count:
+            device_idx = 0
+
+        props = _torch.cuda.get_device_properties(device_idx)
+        vram_total_gb = props.total_memory / (1024 ** 3)
+        if vram_total_gb < 14.0:
+            raise VisualGenerationError(
+                f"Insufficient GPU VRAM for Wan 2.2 TI2V-5B: detected {vram_total_gb:.1f} GB "
+                f"on GPU {device_idx} ('{props.name}'). Minimum 14.0 GB VRAM is required "
+                "(24.0 GB recommended for 720p).\n"
+                "Please allocate a company NVIDIA GPU server with sufficient VRAM."
+            )
+    except Exception as exc:
+        if isinstance(exc, VisualGenerationError):
+            raise
+        logger.warning("[WanVideoAdapter] Could not inspect GPU VRAM properties: %s", exc)
+
+
+def _validate_wan_lora_weights(lora_path_str: str) -> None:
+    """
+    Ensures that configured LoRA weights are actually compatible with Wan 2.2 DiT,
+    and prevents loading legacy SpatialTemporalTTVModel weights.
+    """
+    p = Path(lora_path_str)
+    if not p.exists():
+        raise VisualGenerationError(f"Wan LoRA adapter does not exist: {lora_path_str}")
+
+    # Inspect version_info.json or manifest in checkpoint dir if present
+    target_dir = p if p.is_dir() else p.parent
+    version_info = target_dir / "version_info.json"
+    if version_info.exists():
+        try:
+            data = json.loads(version_info.read_text(encoding="utf-8"))
+            base_model = str(data.get("base_model") or data.get("architecture") or "")
+            if "SpatialTemporal" in base_model:
+                raise VisualGenerationError(
+                    f"Incompatible LoRA weights: '{lora_path_str}' was trained for "
+                    f"'{base_model}', which is incompatible with Wan 2.2 TI2V-5B (DiT). "
+                    "Do not load SpatialTemporal weights into Wan 2.2."
+                )
+        except Exception as exc:
+            if isinstance(exc, VisualGenerationError):
+                raise
+
+    # If single weight file is given, inspect keys if PyTorch state_dict
+    if p.is_file() and p.suffix.lower() == ".pt":
+        try:
+            state = _torch.load(str(p), map_location="cpu")
+            if isinstance(state, dict):
+                weights = state.get("lora_state_dict") or state.get("model_state_dict") or state
+                sample_keys = list(weights.keys())[:10]
+                if any("temp_block" in k or "spatial_encoder" in k or "text_encoder" in k for k in sample_keys):
+                    raise VisualGenerationError(
+                        f"Incompatible LoRA weights: '{lora_path_str}' contains SpatialTemporalTTVModel "
+                        "parameters. Wan 2.2 TI2V-5B requires a Diffusion Transformer (DiT) LoRA adapter."
+                    )
+        except Exception as exc:
+            if isinstance(exc, VisualGenerationError):
+                raise
+
+
+def _enhance_cinematic_prompt(scene: Scene, base_prompt: str) -> str:
+    """
+    Enriches the generation prompt with explicit camera motion, lighting,
+    and photorealistic human/character motion descriptors.
+    """
+    camera_motion = scene.camera_motion or "cinematic camera tracking"
+    enhancements = [
+        base_prompt.strip(),
+        f"camera movement: {camera_motion}",
+        "cinematic lighting",
+        "photorealistic human and character movement",
+        "natural physical dynamics",
+        "high scene consistency",
+        "8k resolution",
+        "finely detailed textures",
+    ]
+    return ", ".join(e for e in enhancements if e)
+
 
 def _build_synthetic_image(scene: Scene, width: int, height: int):
     """
-    Create a solid-colour PIL Image representing the scene's mood when no
-    keyframe is available (text-to-video mode).
-    The colour is derived heuristically from the scene description keywords.
+    Create a mood-aligned PIL Image representing the scene when no keyframe is available.
+    Uses Pillow to create a smooth gradient/color composition reflecting scene visual tone.
     """
     try:
-        from PIL import Image
+        from PIL import Image, ImageDraw
     except ImportError as exc:
         raise VisualGenerationError(
             "Pillow is required for Wan adapter. Install with: pip install Pillow"
         ) from exc
 
     desc = (scene.visual_description or "").lower()
-    # Heuristic colour palette based on common scene types
     if any(k in desc for k in ["night", "dark", "space", "galaxy", "cosmos"]):
-        colour = (10, 10, 30)
+        top_color = (10, 10, 30)
+        bot_color = (25, 20, 50)
     elif any(k in desc for k in ["desert", "sand", "mars", "arid"]):
-        colour = (194, 148, 90)
+        top_color = (210, 160, 100)
+        bot_color = (160, 110, 60)
     elif any(k in desc for k in ["ocean", "sea", "water", "beach"]):
-        colour = (30, 80, 160)
+        top_color = (40, 100, 180)
+        bot_color = (15, 45, 90)
     elif any(k in desc for k in ["forest", "jungle", "tree", "green"]):
-        colour = (30, 90, 40)
+        top_color = (35, 105, 45)
+        bot_color = (15, 55, 20)
     elif any(k in desc for k in ["snow", "ice", "arctic", "winter", "blizzard"]):
-        colour = (220, 235, 255)
-    elif any(k in desc for k in ["sunset", "golden", "dusk", "twilight"]):
-        colour = (200, 110, 50)
+        top_color = (230, 240, 255)
+        bot_color = (180, 205, 230)
+    elif any(k in desc for k in ["sunset", "golden", "dusk", "twilight", "sunrise"]):
+        top_color = (220, 120, 50)
+        bot_color = (90, 40, 60)
     else:
-        colour = (80, 80, 100)  # neutral cinematic grey-blue
+        top_color = (70, 75, 90)
+        bot_color = (40, 45, 55)
 
-    return Image.new("RGB", (width, height), colour)
+    base = Image.new("RGB", (width, height), top_color)
+    draw = ImageDraw.Draw(base)
+    for y in range(height):
+        factor = y / max(1, height - 1)
+        r = int(top_color[0] + factor * (bot_color[0] - top_color[0]))
+        g = int(top_color[1] + factor * (bot_color[1] - top_color[1]))
+        b = int(top_color[2] + factor * (bot_color[2] - top_color[2]))
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+    return base
 
 
 def _frames_to_mp4(frames, output_path: str, fps: int, width: int, height: int) -> None:
     """
     Write a list of PIL Images or numpy arrays to an MP4 file using OpenCV.
-    Falls back to imageio if OpenCV VideoWriter fails to open.
+    OpenCV is used strictly for deterministic video writing/encoding.
     """
     try:
         from PIL import Image as _PILImage
@@ -135,7 +245,6 @@ def _frames_to_mp4(frames, output_path: str, fps: int, width: int, height: int) 
     except ImportError:
         _pil_available = False
 
-    # --- Convert frames to numpy BGR arrays ---
     bgr_frames = []
     for f in frames:
         if _pil_available and isinstance(f, _PILImage.Image):
@@ -144,7 +253,7 @@ def _frames_to_mp4(frames, output_path: str, fps: int, width: int, height: int) 
             arr = f
         else:
             raise VisualGenerationError(f"Unknown frame type from Wan pipeline: {type(f)}")
-        # Resize to target resolution
+
         import cv2
         arr_resized = cv2.resize(arr, (width, height), interpolation=cv2.INTER_LANCZOS4)
         bgr_frames.append(cv2.cvtColor(arr_resized, cv2.COLOR_RGB2BGR))
@@ -169,10 +278,7 @@ def _frames_to_mp4(frames, output_path: str, fps: int, width: int, height: int) 
 
 
 def _interpolate_frames(frames: list, target_count: int) -> list:
-    """
-    Temporally interpolate a frame list to reach `target_count` frames.
-    Uses linear index mapping (same strategy as NeuralVideoAdapter).
-    """
+    """Temporally interpolate a frame list to match exact target frame count."""
     if len(frames) == 0:
         raise VisualGenerationError("Cannot interpolate — frame list is empty.")
     if target_count <= 0:
@@ -180,9 +286,7 @@ def _interpolate_frames(frames: list, target_count: int) -> list:
     if len(frames) == 1:
         return frames * target_count
 
-    import cv2
     from PIL import Image as _PILImage
-
     indices = np.linspace(0, len(frames) - 1, target_count)
     result = []
     for idx_f in indices:
@@ -192,7 +296,6 @@ def _interpolate_frames(frames: list, target_count: int) -> list:
         if lo == hi or alpha == 0.0:
             result.append(frames[lo])
         else:
-            # Blend two PIL frames
             a = np.array(frames[lo].convert("RGB")).astype(np.float32)
             b = np.array(frames[hi].convert("RGB")).astype(np.float32)
             blended = np.clip((1 - alpha) * a + alpha * b, 0, 255).astype(np.uint8)
@@ -206,13 +309,13 @@ def _interpolate_frames(frames: list, target_count: int) -> list:
 
 class WanVideoAdapter(BaseVideoAdapter):
     """
-    Wan 2.2 TI2V-5B Image-to-Video adapter for the BHIV TTV system.
+    Wan 2.2 TI2V-5B Image-to-Video and Text-to-Video adapter.
 
-    * Implements the same BaseVideoAdapter interface as OpenCVVideoAdapter.
-    * Model is loaded lazily on the first inference call (NOT at startup).
-    * Requires an NVIDIA CUDA GPU — raises VisualGenerationError otherwise.
-    * Supports both image-to-video (primary) and text-to-video (synthetic bg).
-    * Output is an MP4 file at the path expected by video_service.py.
+    * Primary video generation model: Wan-AI/Wan2.2-TI2V-5B-Diffusers.
+    * Loaded lazily on first inference request (NOT at startup).
+    * Requires an NVIDIA CUDA GPU with sufficient VRAM (>=14GB).
+    * Never silently falls back to OpenCV for AI video generation.
+    * Surfaces actual errors with detailed diagnostics.
     """
 
     def __init__(self, require_lora: bool = False) -> None:
@@ -239,10 +342,10 @@ class WanVideoAdapter(BaseVideoAdapter):
     def _load_pipeline(self) -> None:
         """
         Load the Wan 2.2 TI2V-5B pipeline from HuggingFace Hub or local path.
-        This method is called once on the first inference request.
+        Called once on the first inference request.
         """
         if self._pipeline is not None:
-            return  # Already loaded
+            return
 
         logger.info(
             f"[WanVideoAdapter] Loading pipeline: {self._model_id} "
@@ -252,13 +355,15 @@ class WanVideoAdapter(BaseVideoAdapter):
         try:
             import torch
             from diffusers import WanImageToVideoPipeline
-            from diffusers.utils import export_to_video  # noqa: F401 — imported for validation
         except ImportError as exc:
             raise VisualGenerationError(
-                "Required packages for Wan are not installed.\n"
+                "Required packages for Wan video generation are not installed.\n"
                 "Run: pip install diffusers>=0.33.0 transformers>=4.51.0 "
                 "accelerate>=1.6.0 safetensors>=0.5.3"
             ) from exc
+
+        # Check CUDA and VRAM before attempting model load
+        _verify_hardware_and_vram(self._device)
 
         dtype_map = {
             "bfloat16": torch.bfloat16,
@@ -266,7 +371,6 @@ class WanVideoAdapter(BaseVideoAdapter):
             "float32": torch.float32,
         }
         torch_dtype = dtype_map.get(self._dtype_str.lower(), torch.bfloat16)
-
         hf_token: Optional[str] = getattr(settings, "HF_TOKEN", None) or None
 
         try:
@@ -275,35 +379,54 @@ class WanVideoAdapter(BaseVideoAdapter):
                 torch_dtype=torch_dtype,
                 token=hf_token,
             )
+
+            # Check and apply LoRA adapter if requested
             if self._require_lora:
                 if not self._lora_path:
                     raise VisualGenerationError(
                         "MODEL_MODE=wan_lora requires WAN_LORA_PATH. "
-                        "Use an adapter trained against this exact Wan base model."
+                        "Specify the path to a trained Wan 2.2 LoRA adapter."
                     )
                 lora_path = os.path.abspath(self._lora_path)
-                if not os.path.exists(lora_path):
-                    raise VisualGenerationError(f"Wan LoRA adapter does not exist: {lora_path}")
+                _validate_wan_lora_weights(lora_path)
+
                 if not hasattr(self._pipeline, "load_lora_weights"):
                     raise VisualGenerationError(
                         "The installed diffusers Wan pipeline does not expose LoRA loading. "
-                        "Upgrade to a Wan-compatible diffusers release before enabling wan_lora."
+                        "Upgrade diffusers before enabling wan_lora."
                     )
                 self._pipeline.load_lora_weights(lora_path)
                 if hasattr(self._pipeline, "fuse_lora"):
                     self._pipeline.fuse_lora(lora_scale=self._lora_scale)
-            self._pipeline.to(self._device)
+
+            # Enable memory efficient features
+            if hasattr(self._pipeline, "enable_model_cpu_offload"):
+                # If VRAM is between 14GB and 20GB, CPU offloading ensures smooth generation
+                try:
+                    props = torch.cuda.get_device_properties(0)
+                    if (props.total_memory / (1024**3)) < 22.0:
+                        self._pipeline.enable_model_cpu_offload()
+                        logger.info("[WanVideoAdapter] Enabled model CPU offload for optimal VRAM usage.")
+                    else:
+                        self._pipeline.to(self._device)
+                except Exception:
+                    self._pipeline.to(self._device)
+            else:
+                self._pipeline.to(self._device)
+
             logger.info("[WanVideoAdapter] Pipeline loaded and moved to device successfully.")
+
         except Exception as exc:
             self._pipeline = None
+            if isinstance(exc, VisualGenerationError):
+                raise
             raise VisualGenerationError(
                 f"Failed to load Wan pipeline '{self._model_id}': {exc}\n"
                 "Check that:\n"
                 "  1. diffusers>=0.33.0 is installed.\n"
-                "  2. The model ID is correct and accessible on HuggingFace.\n"
-                "  3. HF_TOKEN is set if the model requires authentication.\n"
-                "  4. Sufficient VRAM is available (≥16GB recommended for 480p, "
-                "≥24GB for 720p)."
+                "  2. Model ID is accessible on HuggingFace.\n"
+                "  3. HF_TOKEN is valid if model requires authorization.\n"
+                "  4. GPU has sufficient VRAM (>=14GB for 480p, >=24GB for 720p)."
             ) from exc
 
     # ------------------------------------------------------------------
@@ -325,50 +448,37 @@ class WanVideoAdapter(BaseVideoAdapter):
         Parameters
         ----------
         scene : Scene
-            Scene dataclass containing visual_description, narrative, duration,
-            camera_motion, and metadata (including enriched_prompt if available).
+            Scene containing prompt details, duration, camera motion, and metadata.
         keyframe_path : str
-            Absolute path to the keyframe/reference image (image-to-video mode).
-            If the file does not exist, a synthetic background is used (text-to-video mode).
+            Reference image / keyframe path.
         output_path : str
-            Absolute path where the output MP4 will be written.
+            Destination MP4 path.
         width, height : int
-            Target output resolution. Note: Wan VRAM requirements scale with resolution.
+            Target output resolution.
         fps : int
-            Frames per second for the output video.
-
-        Returns
-        -------
-        str
-            The output_path of the generated MP4.
-
-        Raises
-        ------
-        VisualGenerationError
-            If CUDA is unavailable, pipeline fails to load, or inference fails.
+            Frames per second.
         """
-        # ── 1. CUDA guard ──────────────────────────────────────────────
+        # ── 1. CUDA & hardware guard ──────────────────────────────────
         _check_cuda_available()
 
         # ── 2. Prepare output directory ────────────────────────────────
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # ── 3. Determine prompt ────────────────────────────────────────
-        prompt: str = (
+        # ── 3. Prompt enhancement for cinematic & character movement ───
+        raw_prompt = (
             scene.metadata.get("enriched_prompt")
             or scene.visual_description
             or scene.narrative
             or "cinematic video scene"
         )
+        prompt = _enhance_cinematic_prompt(scene, raw_prompt)
 
-        # ── 4. Load input image ────────────────────────────────────────
+        # ── 4. Input image loading (Image-to-Video vs Text-to-Video) ───
         image_mode: str
         if keyframe_path and os.path.exists(keyframe_path):
             try:
                 from PIL import Image
-                input_image = Image.open(keyframe_path).convert("RGB").resize(
-                    (width, height)
-                )
+                input_image = Image.open(keyframe_path).convert("RGB").resize((width, height))
                 image_mode = "image_to_video"
             except Exception as exc:
                 raise VisualGenerationError(
@@ -377,7 +487,7 @@ class WanVideoAdapter(BaseVideoAdapter):
         else:
             logger.warning(
                 "[WanVideoAdapter] No valid keyframe found at '%s'. "
-                "Falling back to synthetic background (text-to-video mode).",
+                "Synthesizing visual reference (text-to-video mode).",
                 keyframe_path,
             )
             input_image = _build_synthetic_image(scene, width, height)
@@ -386,7 +496,7 @@ class WanVideoAdapter(BaseVideoAdapter):
         # ── 5. Lazy-load the pipeline ──────────────────────────────────
         self._load_pipeline()
 
-        # ── 6. Run inference ───────────────────────────────────────────
+        # ── 6. Run inference with memory management ────────────────────
         telemetry.emit(
             "wan_video_generation",
             scene.title,
@@ -411,6 +521,10 @@ class WanVideoAdapter(BaseVideoAdapter):
             self._inference_steps,
         )
 
+        # Clear GPU cache before running inference
+        if _torch is not None and _torch.cuda.is_available():
+            _torch.cuda.empty_cache()
+
         try:
             import torch
             with torch.inference_mode():
@@ -423,16 +537,29 @@ class WanVideoAdapter(BaseVideoAdapter):
                 )
             wan_frames = output.frames[0]  # list of PIL Images
         except Exception as exc:
+            # Check specifically for GPU Out Of Memory
+            if _torch is not None and isinstance(exc, getattr(_torch.cuda, "OutOfMemoryError", tuple())):
+                if _torch.cuda.is_available():
+                    _torch.cuda.empty_cache()
+                raise VisualGenerationError(
+                    f"[WanVideoAdapter] GPU Out Of Memory during inference for scene '{scene.title}'.\n"
+                    "Suggestions:\n"
+                    "  1. Reduce video resolution (e.g. standard 720p or 480p).\n"
+                    "  2. Ensure no other processes are consuming VRAM on the NVIDIA GPU server."
+                ) from exc
             raise VisualGenerationError(
                 f"[WanVideoAdapter] Inference failed for scene '{scene.title}': {exc}"
             ) from exc
+        finally:
+            if _torch is not None and _torch.cuda.is_available():
+                _torch.cuda.empty_cache()
 
-        # ── 7. Temporal interpolation to match scene duration ──────────
-        target_frame_count = max(12, int(scene.duration * fps))
+        # ── 7. Temporal interpolation to match exact scene duration ────
+        target_frame_count = max(12, int(round(scene.duration * fps)))
         if len(wan_frames) != target_frame_count:
             logger.info(
                 "[WanVideoAdapter] Interpolating %d Wan frames → %d frames "
-                "(scene duration=%.1fs @ %d fps).",
+                "(scene duration=%.2fs @ %d fps).",
                 len(wan_frames),
                 target_frame_count,
                 scene.duration,
@@ -440,7 +567,7 @@ class WanVideoAdapter(BaseVideoAdapter):
             )
             wan_frames = _interpolate_frames(wan_frames, target_frame_count)
 
-        # ── 8. Write frames to MP4 ─────────────────────────────────────
+        # ── 8. Write frames to MP4 using OpenCV ────────────────────────
         _frames_to_mp4(wan_frames, output_path, fps=fps, width=width, height=height)
 
         logger.info(

@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Providers
     LLM_PROVIDER: str = "local"
     IMAGE_PROVIDER: str = "local"
-    VIDEO_PROVIDER: str = "opencv"
+    VIDEO_PROVIDER: str = "wan"
     TTS_PROVIDER: str = "local"
     VISION_PROVIDER: str = "standard"
 
@@ -90,8 +90,12 @@ class Settings(BaseSettings):
     REALTIME_DATA_TIMEOUT: int = 10
 
     # Reference retrieval
-    REFERENCE_MAX_BYTES: int = 104857600
-    REFERENCE_DOWNLOAD_TIMEOUT: int = 30
+    REFERENCE_MAX_BYTES: int = 2147483648  # 2 GB for long videos (up to 60 mins)
+    REFERENCE_MAX_DURATION: int = 3600  # 60 minutes maximum input duration
+    LONG_VIDEO_SEGMENT_DURATION: float = 5.0
+    LONG_VIDEO_SAMPLE_INTERVAL: float = 30.0
+    LONG_VIDEO_MAX_SCENES: int = 30
+    REFERENCE_DOWNLOAD_TIMEOUT: int = 600  # 10 minutes timeout for large reference downloads
 
     # Lip-sync
     LIPSYNC_ENABLED: bool = True

@@ -195,7 +195,7 @@ def detect_file_signature(data: bytes) -> Optional[Tuple[str, str, str]]:
     return None
 
 
-def validate_media_file(filepath: str, max_bytes: int = 50 * 1024 * 1024) -> Dict[str, Any]:
+def validate_media_file(filepath: str, max_bytes: Optional[int] = None, max_duration: Optional[float] = None) -> Dict[str, Any]:
     """
     Thoroughly inspect a downloaded reference file:
     - Verifies file existence and non-zero size
@@ -204,6 +204,12 @@ def validate_media_file(filepath: str, max_bytes: int = 50 * 1024 * 1024) -> Dic
     - Validates actual readability and integrity with Pillow (images) or OpenCV (videos)
     - Returns metadata dict with dimensions, duration, media_type, etc.
     """
+    from app.core.config import settings
+    if max_bytes is None:
+        max_bytes = int(getattr(settings, "REFERENCE_MAX_BYTES", 2147483648))
+    if max_duration is None:
+        max_duration = float(getattr(settings, "REFERENCE_MAX_DURATION", 3600.0))
+
     if not os.path.exists(filepath):
         raise ValidationError("The media could not be downloaded.")
 
@@ -252,6 +258,8 @@ def validate_media_file(filepath: str, max_bytes: int = 50 * 1024 * 1024) -> Dic
             cap = cv2.VideoCapture(filepath)
             if not cap.isOpened():
                 raise ValidationError("The reference file appears corrupted or unreadable.")
+            if duration > max_duration:
+                raise ValidationError(f"Video duration ({round(duration, 1)}s) exceeds the maximum allowed limit of {int(max_duration)} seconds ({int(max_duration // 60)} minutes).")
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
             fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
@@ -263,6 +271,8 @@ def validate_media_file(filepath: str, max_bytes: int = 50 * 1024 * 1024) -> Dic
 
             if not ok or frame is None or width <= 0 or height <= 0:
                 raise ValidationError("The reference file appears corrupted or unreadable.")
+            if duration > max_duration:
+                raise ValidationError(f"Video duration ({round(duration, 1)}s) exceeds the maximum allowed limit of {int(max_duration)} seconds ({int(max_duration // 60)} minutes).")
         except Exception as e:
             if isinstance(e, ValidationError):
                 raise

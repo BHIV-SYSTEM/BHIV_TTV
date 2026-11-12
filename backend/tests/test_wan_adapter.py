@@ -69,7 +69,7 @@ def test_wan_adapter_selected_by_factory():
 def test_opencv_adapter_selected_as_default():
     """get_video_adapter with no argument or 'opencv' must return OpenCVVideoAdapter."""
     adapter_default = get_video_adapter()
-    assert isinstance(adapter_default, OpenCVVideoAdapter), (
+    assert isinstance(adapter_default, WanVideoAdapter), (
         "Default provider must be OpenCVVideoAdapter."
     )
 

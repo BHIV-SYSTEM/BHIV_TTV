@@ -129,11 +129,18 @@ class TextToVideoPipeline:
             scenes, master_audio_path, raw_final, execution_id, width=width, height=height, fps=fps
         )
 
-    def validate_video(self, video_path: str, execution_id: str) -> Dict[str, Any]:
+    def validate_video(self, video_path: str, execution_id: str, expected_duration: Optional[float] = None) -> Dict[str, Any]:
         telemetry.emit("stage_12_validate_video", execution_id)
         is_valid, info = validate_video_file(video_path)
         if not is_valid:
             raise VisualGenerationError(f"Video validation failed: {info.get('error')}")
+        if expected_duration is not None:
+            actual_duration = float(info.get("duration") or 0.0)
+            if abs(actual_duration - expected_duration) > 1.5:
+                raise VisualGenerationError(
+                    f"Generated video duration mismatch: actual {actual_duration:.2f}s "
+                    f"does not match requested duration {expected_duration:.2f}s."
+                )
         return info
 
     def store_output(
@@ -327,7 +334,7 @@ class TextToVideoPipeline:
             )
 
             await _report("validating_video", 95)
-            validation_info = self.validate_video(final_raw_video, execution_id)
+            validation_info = self.validate_video(final_raw_video, execution_id, expected_duration=float(duration))
             if int(validation_info.get("width") or 0) != width or int(validation_info.get("height") or 0) != height:
                 raise VisualGenerationError(
                     f"Final video is {validation_info.get('width')}x{validation_info.get('height')}, "
