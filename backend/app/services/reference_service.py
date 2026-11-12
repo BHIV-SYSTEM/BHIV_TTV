@@ -55,7 +55,6 @@ class ReferenceService:
             inspected = validate_media_file(
                 str(dest_path),
                 max_bytes=settings.REFERENCE_MAX_BYTES,
-            max_duration=settings.REFERENCE_MAX_DURATION,
                 max_duration=settings.REFERENCE_MAX_DURATION,
             )
             media_type = "image" if ext in ALLOWED_IMAGE_EXT else "video"
@@ -133,6 +132,14 @@ class ReferenceService:
         dest = str(self.root / reference_id / "still.jpg")
         if os.path.exists(dest):
             return dest
+        import subprocess
+        try:
+            cmd = ['ffmpeg', '-y', '-ss', '0.5', '-i', media_path, '-vframes', '1', '-q:v', '2', dest]
+            res = subprocess.run(cmd, capture_output=True, timeout=10)
+            if res.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 0:
+                return dest
+        except Exception:
+            pass
         cap = cv2.VideoCapture(media_path)
         try:
             ok, frame = cap.read()
@@ -156,16 +163,25 @@ class ReferenceService:
                 pass
         else:
             try:
-                cap = cv2.VideoCapture(path)
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) or None
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) or None
-                fps_cap = float(cap.get(cv2.CAP_PROP_FPS) or 24.0)
-                fps = int(fps_cap) if fps_cap > 0 else 24
-                frame_count = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-                duration = round(frame_count / max(1.0, fps_cap), 2) if frame_count > 0 else 5.0
-                cap.release()
+                from training.preprocessing.long_video_processor import LongVideoProcessor
+                processor = LongVideoProcessor(max_duration=getattr(settings, 'REFERENCE_MAX_DURATION', 3600.0))
+                meta = processor.validate_and_extract_metadata(path)
+                width = meta.get('width') or 1280
+                height = meta.get('height') or 720
+                fps = int(meta.get('fps') or 24)
+                duration = meta.get('duration') or 5.0
             except Exception:
-                pass
+                try:
+                    cap = cv2.VideoCapture(path)
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) or None
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) or None
+                    fps_cap = float(cap.get(cv2.CAP_PROP_FPS) or 24.0)
+                    fps = int(fps_cap) if fps_cap > 0 else 24
+                    frame_count = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                    duration = round(frame_count / max(1.0, fps_cap), 2) if frame_count > 0 else 5.0
+                    cap.release()
+                except Exception:
+                    pass
 
         fname = os.path.basename(path)
         still_file = self.root / reference_id / "still.jpg"

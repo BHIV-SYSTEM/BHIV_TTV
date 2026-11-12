@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import time
 import uuid
 import subprocess
 import threading
@@ -223,6 +224,7 @@ class TrainingJobManager:
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self._gpu_metrics_cache: Dict[str, Any] = {"sampled_at": 0.0, "devices": None}
+        self._gpu_metrics_warning_logged = False
         self.jobs_dir = settings.get_absolute_path("generated/training_jobs")
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self._load_persisted_jobs()
@@ -298,7 +300,9 @@ class TrainingJobManager:
                 })
             self._gpu_metrics_cache = {"sampled_at": now, "devices": devices or None}
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
-            logger.warning("GPU utilization metrics are unavailable: %s", exc)
+            if not self._gpu_metrics_warning_logged:
+                logger.warning("GPU utilization metrics are unavailable: %s", exc)
+                self._gpu_metrics_warning_logged = True
             self._gpu_metrics_cache = {"sampled_at": now, "devices": None}
         return self._gpu_metrics_cache["devices"]
 

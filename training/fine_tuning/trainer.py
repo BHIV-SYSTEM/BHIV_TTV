@@ -221,10 +221,12 @@ class TTVTrainer:
             # Save checkpoint if best or at end
             if val_metrics["val_loss"] < self.best_val_loss or (epoch + 1) == self.epochs:
                 self.best_val_loss = val_metrics["val_loss"]
-                self.save_checkpoint(f"checkpoint_epoch_{epoch+1}.pt", metrics=combined)
+                checkpoint = self.save_checkpoint(f"checkpoint_epoch_{epoch+1}.pt", metrics=combined)
+                print(f"Checkpoint saved: {checkpoint}")
 
         elapsed = time.time() - start_time
         final_ckpt = self.save_checkpoint("final_model.pt", metrics={"history": self.history, "elapsed_s": elapsed})
+        print(f"Checkpoint saved: {final_ckpt}")
         return {
             "elapsed_seconds": round(elapsed, 2),
             "final_checkpoint": final_ckpt,
