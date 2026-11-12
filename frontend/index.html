@@ -705,11 +705,11 @@
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
                                     Reference Media
                                 </h3>
-                                <p class="text-secondary text-sm" style="margin-top:-6px; margin-bottom:12px;">Upload or paste a supported reference. Dataset preparation, validation, and training start automatically.</p>
+                                <p class="text-secondary text-sm" style="margin-top:-6px; margin-bottom:12px;">Upload images or videos up to 60 minutes (15, 20, 30, 45, 60 min), or paste video URLs. Processing, frame extraction, validation, and GPU training start automatically without manual clicks.</p>
                                 
                                 <div class="reference-actions">
                                     <button type="button" class="ref-action-btn" id="train-upload-image-btn">Upload Image</button>
-                                    <button type="button" class="ref-action-btn" id="train-upload-video-btn">Upload Video</button>
+                                    <button type="button" class="ref-action-btn" id="train-upload-video-btn">Upload Video (Up to 60m)</button>
                                     <button type="button" class="ref-action-btn" id="train-paste-link-btn">Paste Reference Link</button>
                                 </div>
                                 <input type="file" id="train-reference-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
@@ -752,7 +752,8 @@
                                     <div class="control-group">
                                         <label for="train-base-model" class="field-label">Base Model</label>
                                         <select id="train-base-model" class="custom-select">
-                                            <option value="SpatialTemporalTTVModel">SpatialTemporalTTVModel (Base)</option>
+                                            <option value="Wan2.2-TI2V-5B" selected>Wan 2.2 TI2V-5B (Primary DiT)</option>
+                                            <option value="SpatialTemporalTTVModel">SpatialTemporalTTVModel (Legacy Base)</option>
                                         </select>
                                     </div>
                                     <div class="control-group">

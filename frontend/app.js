@@ -508,6 +508,10 @@ document.addEventListener("DOMContentLoaded", () => {
             showPreview(data, file.name);
             setStatus(`Uploaded ${data.media_type}: ${file.name}`);
             showToast(`Reference ${data.media_type} uploaded successfully.`);
+            if (data.auto_training_job_id) {
+                appendTerminalLog(`[Automatic] Triggered training workflow job ${data.auto_training_job_id} for ${data.reference_id}`, "text-accent");
+                pollAutomaticTrainingJob(data.auto_training_job_id);
+            }
             if (cfg.onReferenceChange) cfg.onReferenceChange(state);
         }
 
@@ -548,6 +552,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 showPreview(data, `${data.source.toUpperCase()} Reference`);
                 setStatus(`Processed ${data.media_type} from ${data.source}`);
                 showToast("Reference link processed successfully!");
+                if (data.auto_training_job_id) {
+                    appendTerminalLog(`[Automatic] Triggered training workflow job ${data.auto_training_job_id} for ${data.reference_id}`, "text-accent");
+                    pollAutomaticTrainingJob(data.auto_training_job_id);
+                }
                 if (cfg.onReferenceChange) cfg.onReferenceChange(state);
             } catch (err) {
                 setStatus(`Failed: ${err.message}`);
@@ -1432,7 +1440,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const request = {
             reference_id: referenceId,
-            base_model: document.getElementById("train-base-model")?.value || "SpatialTemporalTTVModel",
+            base_model: document.getElementById("train-base-model")?.value || "Wan2.2-TI2V-5B",
             method: document.getElementById("train-method")?.value || "lora",
             epochs: parseInt(document.getElementById("train-epochs")?.value || "10", 10),
             learning_rate: parseFloat(document.getElementById("train-lr")?.value || "0.0001"),
@@ -1478,7 +1486,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const lr = document.getElementById("train-lr")?.value || "0.0001";
             const batchSize = parseInt(document.getElementById("train-batch-size")?.value || "2", 10);
             const method = document.getElementById("train-method")?.value || "lora";
-            const baseModel = document.getElementById("train-base-model")?.value || "SpatialTemporalTTVModel";
+            const baseModel = document.getElementById("train-base-model")?.value || "Wan2.2-TI2V-5B";
 
             startTrainingBtn.disabled = true;
             if (startTrainingBtnText) startTrainingBtnText.textContent = "Submitting Job...";

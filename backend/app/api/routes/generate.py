@@ -114,8 +114,16 @@ async def upload_reference(
 ):
     content = await file.read()
     payload = reference_service.save_upload(file.filename or "reference.bin", content, file.content_type)
+    ref_id = payload["reference_id"]
+    auto_job_id = None
+    try:
+        from app.api.routes.training import trigger_automatic_training_for_reference
+        auto_job_id = await trigger_automatic_training_for_reference(ref_id)
+    except Exception as e:
+        logger.warning(f"Failed to auto-trigger training for reference {ref_id}: {e}")
+
     return ReferenceUploadResponse(
-        reference_id=payload["reference_id"],
+        reference_id=ref_id,
         media_type=payload["media_type"],
         source="upload",
         width=payload.get("width"),
@@ -123,7 +131,8 @@ async def upload_reference(
         preview_url=payload.get("preview_url"),
         still_url=payload.get("still_path") or payload.get("preview_url"),
         status="stored",
-        message="Reference uploaded successfully",
+        auto_training_job_id=auto_job_id,
+        message="Reference uploaded successfully and automatic training initialized.",
     )
 
 
@@ -134,15 +143,24 @@ async def process_reference_url(request: ReferenceProcessRequest):
     Ingest and process a public reference media URL (YouTube, Instagram, Facebook, X, or Direct URL).
     """
     payload = await reference_service.ingest_url(request.url)
+    ref_id = payload["reference_id"]
+    auto_job_id = None
+    try:
+        from app.api.routes.training import trigger_automatic_training_for_reference
+        auto_job_id = await trigger_automatic_training_for_reference(ref_id)
+    except Exception as e:
+        logger.warning(f"Failed to auto-trigger training for reference {ref_id}: {e}")
+
     return ReferenceDetailResponse(
-        reference_id=payload["reference_id"],
+        reference_id=ref_id,
         media_type=payload["media_type"],
         source=payload.get("source", "url"),
         width=payload.get("width"),
         height=payload.get("height"),
         path=payload.get("path"),
         preview_url=payload.get("preview_url"),
-        message="Reference URL processed successfully",
+        auto_training_job_id=auto_job_id,
+        message="Reference URL processed successfully and automatic training initialized.",
     )
 
 
