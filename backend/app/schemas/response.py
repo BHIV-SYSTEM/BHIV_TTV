@@ -88,6 +88,7 @@ class ReferenceUploadResponse(BaseModel):
     preview_url: Optional[str] = None
     still_url: Optional[str] = None
     status: str = "stored"
+    auto_training_job_id: Optional[str] = None
     message: str = "Reference stored successfully"
 
 
@@ -99,6 +100,7 @@ class ReferenceDetailResponse(BaseModel):
     height: Optional[int] = None
     path: Optional[str] = None
     preview_url: Optional[str] = None
+    auto_training_job_id: Optional[str] = None
     message: str = "Reference retrieved successfully"
 
 

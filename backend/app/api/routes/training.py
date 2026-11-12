@@ -52,8 +52,8 @@ def _validate_reference_sample(reference_payload: Dict[str, Any]) -> Dict[str, A
     sample = prepare_reference_dataset_entry(reference_payload)
     media_path = sample["video_path"]
 
-    if reference_payload["media_type"] == "video":
-        validation = DatasetValidator(min_duration=0.1).validate_dataset([sample])
+    if reference_payload.get("media_type") == "video":
+        validation = DatasetValidator(min_duration=0.1, max_duration=3600.0).validate_dataset([sample])
         if validation["valid_count"] != 1:
             reasons = [
                 issue.get("reason", "Dataset sample validation failed")
@@ -88,9 +88,44 @@ async def _run_automatic_training_job(job_id: str, request: AutomaticTrainingReq
         if not reference:
             raise ValidationError("The uploaded reference could not be found.")
 
-        job["stage"] = "frame_extraction"
-        job["logs"].append("[Dataset] Extracting and validating reference frames...")
-        sample = await asyncio.to_thread(_validate_reference_sample, reference)
+        duration = float(reference.get("duration") or 0.0)
+        media_type = reference.get("media_type", "image")
+        is_long_video = (media_type == "video" and duration > 30.0)
+
+        if is_long_video:
+            from training.preprocessing.long_video_processor import LongVideoProcessor
+            job["stage"] = "video_segmentation"
+            job["logs"].append(
+                f"[Long Video] Detected duration: {duration:.1f}s ({duration/60:.1f} min). "
+                f"Executing streaming audio extraction, scene detection and segmentation..."
+            )
+            long_proc = LongVideoProcessor(
+                max_duration=3600.0,
+                segment_duration=settings.LONG_VIDEO_SEGMENT_DURATION,
+                sample_interval=settings.LONG_VIDEO_SAMPLE_INTERVAL,
+                max_segments=settings.LONG_VIDEO_MAX_SCENES
+            )
+            workspace_dir = settings.get_absolute_path(f"generated/references/{request.reference_id}/long_video")
+            result = await asyncio.to_thread(
+                long_proc.process_long_video_pipeline,
+                video_path=reference["path"],
+                workspace_dir=str(workspace_dir),
+                reference_id=request.reference_id,
+                caption=f"Reference training sequence for {request.reference_id}"
+            )
+            manifest_records = result.get("records") or []
+            job["logs"].append(
+                f"[Long Video] Successfully extracted {len(manifest_records)} segments "
+                f"and demuxed audio without loading video into memory."
+            )
+            if not manifest_records:
+                sample = await asyncio.to_thread(_validate_reference_sample, reference)
+                manifest_records = [sample]
+        else:
+            job["stage"] = "frame_extraction"
+            job["logs"].append("[Dataset] Extracting and validating reference frames...")
+            sample = await asyncio.to_thread(_validate_reference_sample, reference)
+            manifest_records = [sample]
 
         job["stage"] = "dataset_validation"
         job["logs"].append("[Dataset] Dataset preparation and validation completed.")
@@ -104,7 +139,7 @@ async def _run_automatic_training_job(job_id: str, request: AutomaticTrainingReq
         }
         job["logs"].append(f"[Model] Preparing {request.base_model} with {request.method} fine-tuning.")
         queued_job = await training_job_manager.create_job(
-            manifest_data=[sample],
+            manifest_data=manifest_records,
             config=config,
             manifest_filename=f"{request.reference_id}.jsonl",
         )
@@ -190,6 +225,20 @@ async def start_automatic_training(request: AutomaticTrainingRequest):
 
     asyncio.create_task(_run_automatic_training_job(job_id, request))
     return AutomaticTrainingJobResponse(**_automatic_training_snapshot(job_id))
+
+
+async def trigger_automatic_training_for_reference(reference_id: str, base_model: str = "Wan2.2-TI2V-5B") -> str:
+    """Helper to dispatch automatic training whenever a reference is uploaded or processed."""
+    request = AutomaticTrainingRequest(
+        reference_id=reference_id,
+        base_model=base_model,
+        method="lora",
+        epochs=5,
+        learning_rate=0.0001,
+        batch_size=2,
+    )
+    res = await start_automatic_training(request)
+    return res.job_id
 
 
 @router.get("/auto/{job_id}", response_model=AutomaticTrainingJobResponse)

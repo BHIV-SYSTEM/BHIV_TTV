@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 class AutomaticTrainingRequest(BaseModel):
     reference_id: str = Field(..., pattern=r"^ref_[a-f0-9]{12}$")
-    base_model: str = Field(default="SpatialTemporalTTVModel", min_length=1)
+    base_model: str = Field(default="Wan2.2-TI2V-5B", min_length=1)
     method: Literal["lora", "full", "temporal_only"] = "lora"
     epochs: int = Field(default=10, ge=1, le=100)
     learning_rate: float = Field(default=0.0001, gt=0.0)
@@ -33,7 +33,7 @@ class AutomaticTrainingJobResponse(BaseModel):
 
 
 class TrainingJobConfig(BaseModel):
-    base_model: str = Field(default="SpatialTemporalTTVModel", description="Base generative model architecture")
+    base_model: str = Field(default="Wan2.2-TI2V-5B", description="Base generative model architecture")
     method: str = Field(default="lora", description="Fine-tuning method: lora, full, or temporal_only")
     epochs: int = Field(default=10, ge=1, le=100, description="Number of training epochs")
     learning_rate: float = Field(default=0.0001, gt=0.0, description="Learning rate")

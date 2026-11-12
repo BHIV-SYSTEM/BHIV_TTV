@@ -69,14 +69,19 @@ class VideoPreprocessor:
             indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int).tolist()
 
         frames = []
+        last_frame = None
         for idx in indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ret, frame = cap.read()
             if not ret or frame is None:
+                if last_frame is not None:
+                    frames.append(last_frame.copy())
+                    continue
                 cap.release()
                 raise RuntimeError(f"Could not decode frame {idx} from video: {video_path}")
             # Convert BGR to RGB
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            last_frame = frame
             frames.append(frame)
 
         cap.release()
