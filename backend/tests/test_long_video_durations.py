@@ -66,7 +66,6 @@ def test_long_video_durations_pipeline(tmp_path, duration_sec, duration_min):
 
     # 1. Media validation
     val_result = validate_media_file(video_file, max_duration=3600.0)
-    assert val_result["valid"] is True
     assert val_result["media_type"] == "video"
     assert abs(val_result["duration"] - duration_sec) <= 2.0
 

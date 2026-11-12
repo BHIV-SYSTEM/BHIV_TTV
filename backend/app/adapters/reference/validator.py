@@ -258,21 +258,19 @@ def validate_media_file(filepath: str, max_bytes: Optional[int] = None, max_dura
             cap = cv2.VideoCapture(filepath)
             if not cap.isOpened():
                 raise ValidationError("The reference file appears corrupted or unreadable.")
-            if duration > max_duration:
-                raise ValidationError(f"Video duration ({round(duration, 1)}s) exceeds the maximum allowed limit of {int(max_duration)} seconds ({int(max_duration // 60)} minutes).")
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
             fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
             duration = (frame_count / fps) if (fps > 0 and frame_count > 0) else 0.0
+            if duration > max_duration:
+                raise ValidationError(f"Video duration ({round(duration, 1)}s) exceeds the maximum allowed limit of {int(max_duration)} seconds ({int(max_duration // 60)} minutes).")
 
             ok, frame = cap.read()
             cap.release()
 
             if not ok or frame is None or width <= 0 or height <= 0:
                 raise ValidationError("The reference file appears corrupted or unreadable.")
-            if duration > max_duration:
-                raise ValidationError(f"Video duration ({round(duration, 1)}s) exceeds the maximum allowed limit of {int(max_duration)} seconds ({int(max_duration // 60)} minutes).")
         except Exception as e:
             if isinstance(e, ValidationError):
                 raise

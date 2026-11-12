@@ -141,7 +141,7 @@ def _validate_wan_lora_weights(lora_path_str: str) -> None:
         try:
             data = json.loads(version_info.read_text(encoding="utf-8"))
             base_model = str(data.get("base_model") or data.get("architecture") or "")
-            if "SpatialTemporal" in base_model:
+            if "spatialtemporal" in base_model.lower():
                 raise VisualGenerationError(
                     f"Incompatible LoRA weights: '{lora_path_str}' was trained for "
                     f"'{base_model}', which is incompatible with Wan 2.2 TI2V-5B (DiT). "
@@ -151,14 +151,15 @@ def _validate_wan_lora_weights(lora_path_str: str) -> None:
             if isinstance(exc, VisualGenerationError):
                 raise
 
-    # If single weight file is given, inspect keys if PyTorch state_dict
-    if p.is_file() and p.suffix.lower() == ".pt":
+    # Inspect state dict keys if .pt file exists (either directly or inside target_dir)
+    weight_file = p if (p.is_file() and p.suffix.lower() == ".pt") else (target_dir / "adapter_model.pt" if (target_dir / "adapter_model.pt").exists() else None)
+    if weight_file and weight_file.exists():
         try:
-            state = _torch.load(str(p), map_location="cpu")
+            state = _torch.load(str(weight_file), map_location="cpu")
             if isinstance(state, dict):
                 weights = state.get("lora_state_dict") or state.get("model_state_dict") or state
-                sample_keys = list(weights.keys())[:10]
-                if any("temp_block" in k or "spatial_encoder" in k or "text_encoder" in k for k in sample_keys):
+                sample_keys = list(weights.keys())[:30]
+                if any("spatial_conv" in k or "temporal_conv" in k or "temp_block" in k or "spatial_encoder" in k or "text_encoder" in k for k in sample_keys):
                     raise VisualGenerationError(
                         f"Incompatible LoRA weights: '{lora_path_str}' contains SpatialTemporalTTVModel "
                         "parameters. Wan 2.2 TI2V-5B requires a Diffusion Transformer (DiT) LoRA adapter."
@@ -334,6 +335,22 @@ class WanVideoAdapter(BaseVideoAdapter):
             f"device={self._device}, dtype={self._dtype_str}). "
             "Model will be loaded on first inference call."
         )
+
+    def load_lora_weights(self, lora_path: str) -> str:
+        """
+        Validate and bind a trained Wan 2.2 LoRA adapter.
+        Validates weight architecture before loading to prevent incompatible weights.
+        """
+        resolved_path = os.path.abspath(lora_path)
+        _validate_wan_lora_weights(resolved_path)
+        self._lora_weights_path = resolved_path
+        self._lora_path = resolved_path
+        self._require_lora = True
+        if self._pipeline is not None and hasattr(self._pipeline, "load_lora_weights"):
+            self._pipeline.load_lora_weights(resolved_path)
+            if hasattr(self._pipeline, "fuse_lora"):
+                self._pipeline.fuse_lora(lora_scale=self._lora_scale)
+        return resolved_path
 
     # ------------------------------------------------------------------
     # Pipeline loading (called lazily)
