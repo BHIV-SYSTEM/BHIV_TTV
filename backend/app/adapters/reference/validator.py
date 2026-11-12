@@ -170,6 +170,10 @@ def detect_file_signature(data: bytes) -> Optional[Tuple[str, str, str]]:
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image", ".png", "image/png"
 
+    # GIF87a / GIF89a
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image", ".gif", "image/gif"
+
     # WEBP: RIFF....WEBP
     if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "image", ".webp", "image/webp"

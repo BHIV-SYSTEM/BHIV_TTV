@@ -36,7 +36,7 @@ class VideoPreprocessor:
 
         # If an image file is passed, duplicate across frames
         ext = os.path.splitext(video_path)[1].lower()
-        if ext in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+        if ext in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}:
             img = cv2.imread(video_path)
             if img is not None:
                 rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -73,14 +73,10 @@ class VideoPreprocessor:
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ret, frame = cap.read()
             if not ret or frame is None:
-                # If read fails, duplicate last frame or create black frame
-                if frames:
-                    frame = frames[-1].copy()
-                else:
-                    frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-            else:
-                # Convert BGR to RGB
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                cap.release()
+                raise RuntimeError(f"Could not decode frame {idx} from video: {video_path}")
+            # Convert BGR to RGB
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(frame)
 
         cap.release()

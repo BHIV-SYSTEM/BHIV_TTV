@@ -213,8 +213,8 @@
         "seed": 42
       },
       "timing": {
-        "total_diagnostic_time_sec": 0.5299,
-        "model_forward_time_sec": 0.0523
+        "total_diagnostic_time_sec": 0.4978,
+        "model_forward_time_sec": 0.0524
       }
     }
   },
@@ -227,13 +227,13 @@
   "motion_consistency": {
     "status": "PASS",
     "x_positions_sample": [
-      48.89549180327869,
-      50.020790020790024,
-      53.03131524008351,
-      57.997929606625256,
-      64.86128364389234
+      48.9937369519833,
+      50.07276507276507,
+      52.93153526970954,
+      58.053941908713696,
+      64.88819875776397
     ],
-    "total_travel_pixels": 224.10029767040555
+    "total_travel_pixels": 223.81411428768615
   },
   "diversity_6_prompts": {
     "status": "PASS",
@@ -250,7 +250,7 @@
     "has_green_field": true,
     "is_not_blue_car": true,
     "frame_count": 24,
-    "mean_interframe_diff": 8.679439978361515,
+    "mean_interframe_diff": 8.677991898148147,
     "zero_motion_frames": 0
   }
 }

@@ -12,7 +12,7 @@ import cv2
 from PIL import Image
 
 from app.adapters.reference import get_reference_adapter
-from app.adapters.reference.validator import validate_public_url
+from app.adapters.reference.validator import validate_media_file, validate_public_url
 from app.core.config import settings
 from app.core.exceptions import ValidationError
 from app.core.logging import telemetry
@@ -50,14 +50,21 @@ class ReferenceService:
         dest_dir = self.root / ref_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / f"source{ext}"
-        dest_path.write_bytes(content)
-        media_type = "image" if ext in ALLOWED_IMAGE_EXT else "video"
-        if media_type == "video":
-            try:
+        try:
+            dest_path.write_bytes(content)
+            inspected = validate_media_file(
+                str(dest_path),
+                max_bytes=settings.REFERENCE_MAX_BYTES,
+            )
+            media_type = "image" if ext in ALLOWED_IMAGE_EXT else "video"
+            if inspected["media_type"] != media_type:
+                raise ValidationError("The uploaded file extension does not match its media format.")
+            if media_type == "video":
                 self.extract_still(str(dest_path), media_type, ref_id)
-            except Exception:
-                pass
-        payload = self._describe(str(dest_path), media_type, source="upload", reference_id=ref_id)
+            payload = self._describe(str(dest_path), media_type, source="upload", reference_id=ref_id)
+        except Exception:
+            shutil.rmtree(dest_dir, ignore_errors=True)
+            raise
         telemetry.emit("reference_uploaded", ref_id, {"media_type": media_type, "bytes": len(content)})
         return payload
 
@@ -68,11 +75,14 @@ class ReferenceService:
         os.makedirs(dest_dir, exist_ok=True)
         adapter = get_reference_adapter(safe_url)
         retrieved = await adapter.retrieve(safe_url, dest_dir)
+        inspected = validate_media_file(
+            retrieved["path"],
+            max_bytes=settings.REFERENCE_MAX_BYTES,
+        )
+        if inspected["media_type"] != retrieved["media_type"]:
+            raise ValidationError("The downloaded file's media format did not match its metadata.")
         if retrieved["media_type"] == "video":
-            try:
-                self.extract_still(retrieved["path"], retrieved["media_type"], ref_id)
-            except Exception:
-                pass
+            self.extract_still(retrieved["path"], retrieved["media_type"], ref_id)
         payload = self._describe(
             retrieved["path"],
             retrieved["media_type"],
@@ -121,11 +131,14 @@ class ReferenceService:
         if os.path.exists(dest):
             return dest
         cap = cv2.VideoCapture(media_path)
-        ok, frame = cap.read()
-        cap.release()
+        try:
+            ok, frame = cap.read()
+        finally:
+            cap.release()
         if not ok or frame is None:
             raise ValidationError("Could not extract a still frame from the reference video.")
-        cv2.imwrite(dest, frame)
+        if not cv2.imwrite(dest, frame):
+            raise ValidationError("Could not save a still frame from the reference video.")
         return dest
 
     def _describe(self, path: str, media_type: str, source: str, reference_id: str) -> Dict[str, Any]:

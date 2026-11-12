@@ -1,30 +1,230 @@
-<<<<<<< HEAD
-"""Training and Fine-Tuning API routes with full Reference workflow support."""
+"""Training and Fine-Tuning API routes with Reference and Job Management workflows."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
-from typing import Dict, Any, Optional, List
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from typing import Dict, Any, Optional, List, Union
 
-from app.schemas.request import TrainingSessionRequest
-from app.schemas.response import TrainingSessionResponse
-from app.services.reference_service import reference_service
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Query
+from fastapi.responses import JSONResponse
+
 from app.core.config import settings
 from app.core.logging import telemetry, logger
 from app.core.exceptions import ValidationError
+from app.services.reference_service import reference_service
+
+from app.schemas.request import TrainingSessionRequest
+from app.schemas.response import TrainingSessionResponse
+from app.schemas.training import (
+    AutomaticTrainingJobResponse,
+    AutomaticTrainingRequest,
+    TrainingJobConfig,
+    TrainingJobResponse,
+    TrainingLogsResponse,
+    ManifestValidationResponse,
+)
+from app.services.training_service import (
+    training_job_manager,
+    parse_manifest_records,
+    validate_manifest_records,
+)
 
 from training.datasets.manifest_builder import build_manifest_from_directory, prepare_reference_dataset_entry
+from training.datasets.validator import DatasetValidator
+from training.preprocessing.video_preprocessor import VideoPreprocessor
 from training.fine_tuning.model import SpatialTemporalTTVModel
 from training.fine_tuning.trainer import TTVTrainer
 from training.datasets.loader import create_dataloader
 
 router = APIRouter()
 
-# In-memory training sessions registry
+# In-memory training sessions registry for direct reference fine-tuning
 _TRAINING_SESSIONS: Dict[str, Dict[str, Any]] = {}
+_AUTOMATIC_TRAINING_JOBS: Dict[str, Dict[str, Any]] = {}
+_AUTOMATIC_TRAINING_BY_REFERENCE: Dict[str, str] = {}
+_AUTOMATIC_TRAINING_LOCK = asyncio.Lock()
+
+
+def _validate_reference_sample(reference_payload: Dict[str, Any]) -> Dict[str, Any]:
+    sample = prepare_reference_dataset_entry(reference_payload)
+    media_path = sample["video_path"]
+
+    if reference_payload["media_type"] == "video":
+        validation = DatasetValidator(min_duration=0.1).validate_dataset([sample])
+        if validation["valid_count"] != 1:
+            reasons = [
+                issue.get("reason", "Dataset sample validation failed")
+                for issue in validation["rejected_samples"]
+            ]
+            raise ValidationError("; ".join(reasons))
+
+    frames = VideoPreprocessor(num_frames=8, height=128, width=128).process_video(media_path)
+    if tuple(frames.shape) != (8, 3, 128, 128) or not bool(frames.isfinite().all()):
+        raise ValidationError("Reference frame extraction produced missing or corrupted frames.")
+
+    validation = validate_manifest_records([sample])
+    if not validation["valid"]:
+        issues = validation["issues"]
+        details = "; ".join(
+            reason
+            for issue in issues
+            for reason in issue.get("reasons", [])
+        )
+        raise ValidationError(details or "The prepared reference dataset is invalid.")
+    return sample
+
+
+async def _run_automatic_training_job(job_id: str, request: AutomaticTrainingRequest) -> None:
+    job = _AUTOMATIC_TRAINING_JOBS[job_id]
+    try:
+        job["status"] = "processing"
+        job["stage"] = "reference_validation"
+        job["message"] = "Validating the uploaded reference."
+        job["logs"].append("[Reference] Validating uploaded media...")
+        reference = await reference_service.resolve(reference_id=request.reference_id)
+        if not reference:
+            raise ValidationError("The uploaded reference could not be found.")
+
+        job["stage"] = "frame_extraction"
+        job["logs"].append("[Dataset] Extracting and validating reference frames...")
+        sample = await asyncio.to_thread(_validate_reference_sample, reference)
+
+        job["stage"] = "dataset_validation"
+        job["logs"].append("[Dataset] Dataset preparation and validation completed.")
+        config = {
+            "base_model": request.base_model,
+            "method": request.method,
+            "epochs": request.epochs,
+            "learning_rate": request.learning_rate,
+            "batch_size": request.batch_size,
+            "version_name": None,
+        }
+        job["logs"].append(f"[Model] Preparing {request.base_model} with {request.method} fine-tuning.")
+        queued_job = await training_job_manager.create_job(
+            manifest_data=[sample],
+            config=config,
+            manifest_filename=f"{request.reference_id}.jsonl",
+        )
+        job["training_job_id"] = queued_job["job_id"]
+        job["status"] = queued_job["status"]
+        job["stage"] = queued_job["stage"]
+        job["message"] = queued_job.get("message")
+        job["cuda_available"] = queued_job.get("cuda_available", False)
+        job["hardware"] = queued_job.get("hardware")
+        job["logs"].append(
+            f"[Training] Job {queued_job['job_id']} submitted to the training queue."
+        )
+    except Exception as exc:
+        logger.exception("Automatic training job %s failed: %s", job_id, exc)
+        job["status"] = "failed"
+        job["stage"] = "failed"
+        job["error"] = str(exc)
+        job["message"] = "Automatic training failed before or during job submission."
+        job["logs"].append(f"[Error] {exc}")
+
+
+def _automatic_training_snapshot(job_id: str) -> Optional[Dict[str, Any]]:
+    job = _AUTOMATIC_TRAINING_JOBS.get(job_id)
+    if not job:
+        return None
+
+    snapshot = {
+        "job_id": job_id,
+        "status": job["status"],
+        "stage": job["stage"],
+        "progress": 0,
+        "epoch": 0,
+        "total_epochs": 0,
+        "loss": None,
+        "device": "cpu",
+        "reference_id": job["reference_id"],
+        "training_job_id": job.get("training_job_id"),
+        "cuda_available": job.get("cuda_available", False),
+        "hardware": job.get("hardware"),
+        "checkpoints": [],
+        "final_checkpoint": None,
+        "metrics": {},
+        "error": job.get("error"),
+        "message": job.get("message"),
+    }
+    training_job_id = job.get("training_job_id")
+    queued_job = training_job_manager.get_job(training_job_id) if training_job_id else None
+    if queued_job:
+        for key in (
+            "status", "stage", "progress", "epoch", "total_epochs", "loss",
+            "device", "cuda_available", "hardware", "checkpoints", "final_checkpoint",
+            "metrics", "error", "message",
+        ):
+            if key in queued_job:
+                snapshot[key] = queued_job[key]
+    return snapshot
+
+
+@router.post("/auto", response_model=AutomaticTrainingJobResponse)
+async def start_automatic_training(request: AutomaticTrainingRequest):
+    """Validate a reference and queue its fine-tuning job without blocking the request."""
+    async with _AUTOMATIC_TRAINING_LOCK:
+        existing_id = _AUTOMATIC_TRAINING_BY_REFERENCE.get(request.reference_id)
+        existing = _AUTOMATIC_TRAINING_JOBS.get(existing_id) if existing_id else None
+        retryable_statuses = {"failed", "CUDA_UNAVAILABLE"}
+        if existing and not (
+            request.retry and existing["status"] in retryable_statuses
+        ):
+            return AutomaticTrainingJobResponse(**_automatic_training_snapshot(existing_id))
+
+        job_id = f"train_auto_{uuid.uuid4().hex[:12]}"
+        _AUTOMATIC_TRAINING_BY_REFERENCE[request.reference_id] = job_id
+        _AUTOMATIC_TRAINING_JOBS[job_id] = {
+            "job_id": job_id,
+            "reference_id": request.reference_id,
+            "status": "preparing",
+            "stage": "queued_for_preparation",
+            "logs": ["[Session] Automatic training workflow started."],
+            "error": None,
+            "training_job_id": None,
+            "message": "Preparing the reference dataset.",
+        }
+
+    asyncio.create_task(_run_automatic_training_job(job_id, request))
+    return AutomaticTrainingJobResponse(**_automatic_training_snapshot(job_id))
+
+
+@router.get("/auto/{job_id}", response_model=AutomaticTrainingJobResponse)
+async def get_automatic_training_status(job_id: str):
+    snapshot = _automatic_training_snapshot(job_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Automatic training job not found.")
+    return AutomaticTrainingJobResponse(**snapshot)
+
+
+@router.get("/auto/{job_id}/logs", response_model=TrainingLogsResponse)
+async def get_automatic_training_logs(
+    job_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: Optional[int] = Query(default=None, ge=1),
+):
+    job = _AUTOMATIC_TRAINING_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Automatic training job not found.")
+
+    logs = list(job["logs"])
+    training_job_id = job.get("training_job_id")
+    queued_logs = training_job_manager.get_job_logs(training_job_id) if training_job_id else None
+    if queued_logs:
+        logs.extend(queued_logs["logs"])
+    selected_logs = logs[offset:offset + limit] if limit is not None else logs[offset:]
+    return TrainingLogsResponse(
+        job_id=job_id,
+        status=_automatic_training_snapshot(job_id)["status"],
+        total_lines=len(logs),
+        logs=selected_logs,
+        cli_fallback_command=(
+            training_job_manager.get_job(training_job_id) or {}
+        ).get("cli_fallback_command") if training_job_id else None,
+    )
 
 
 async def _execute_training_job(
@@ -226,31 +426,11 @@ async def get_training_status(job_id: str):
         config=session.get("config"),
         logs=session.get("logs", [])
     )
-=======
-from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Query
-from fastapi.responses import JSONResponse
-
-from app.core.config import settings
-from app.schemas.training import (
-    TrainingJobConfig,
-    TrainingJobResponse,
-    TrainingLogsResponse,
-    ManifestValidationResponse,
-)
-from app.services.training_service import (
-    training_job_manager,
-    parse_manifest_records,
-    validate_manifest_records,
-)
-
-router = APIRouter()
-
+# --------------------------------------------------------------------------
+# Training Job Management Endpoints (Manifest validation, queueing, logs)
+# --------------------------------------------------------------------------
 
 @router.post("/jobs", response_model=TrainingJobResponse)
 async def launch_or_queue_training_job(
@@ -333,6 +513,8 @@ async def launch_or_queue_training_job(
             manifest_filename=manifest_filename
         )
         return TrainingJobResponse(**job)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create training job: {str(e)}")
 
@@ -403,4 +585,3 @@ async def validate_manifest_endpoint(
     result = validate_manifest_records(records)
     result["manifest_path"] = resolved_path or manifest_filename
     return ManifestValidationResponse(**result)
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)

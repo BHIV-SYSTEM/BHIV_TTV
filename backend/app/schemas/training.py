@@ -1,5 +1,35 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field
+
+
+class AutomaticTrainingRequest(BaseModel):
+    reference_id: str = Field(..., pattern=r"^ref_[a-f0-9]{12}$")
+    base_model: str = Field(default="SpatialTemporalTTVModel", min_length=1)
+    method: Literal["lora", "full", "temporal_only"] = "lora"
+    epochs: int = Field(default=10, ge=1, le=100)
+    learning_rate: float = Field(default=0.0001, gt=0.0)
+    batch_size: int = Field(default=2, ge=1, le=64)
+    retry: bool = False
+
+
+class AutomaticTrainingJobResponse(BaseModel):
+    job_id: str
+    status: str
+    stage: str
+    progress: int = 0
+    epoch: int = 0
+    total_epochs: int = 0
+    loss: Optional[float] = None
+    device: str = "cpu"
+    reference_id: Optional[str] = None
+    training_job_id: Optional[str] = None
+    cuda_available: bool = False
+    hardware: Optional[Dict[str, Any]] = None
+    checkpoints: List[str] = []
+    final_checkpoint: Optional[str] = None
+    metrics: Dict[str, Any] = {}
+    error: Optional[str] = None
+    message: Optional[str] = None
 
 
 class TrainingJobConfig(BaseModel):

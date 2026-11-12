@@ -29,9 +29,13 @@ class TextPreprocessor:
         
         # Attempt to load local cached tokenizer if available
         self._hf_tokenizer = None
-        self._init_tokenizer()
+        if self.vocab_size >= 30522:
+            self._init_tokenizer()
 
     def _init_tokenizer(self):
+        if self.vocab_size < 30522:
+            self._hf_tokenizer = None
+            return
         try:
             from transformers import AutoTokenizer
             # Try offline local load of all-MiniLM-L6-v2
@@ -62,8 +66,6 @@ class TextPreprocessor:
     def tokenize(self, text: str) -> List[str]:
         """Splits prompt into normalized word tokens."""
         clean = self.clean_text(text)
-        if self._hf_tokenizer is not None:
-            return self._hf_tokenizer.tokenize(clean)
         # Remove punctuation except hyphens in words
         tokens = re.findall(r"\b[\w'-]+\b", clean)
         return tokens

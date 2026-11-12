@@ -3,9 +3,9 @@
   "model_type": "lora",
   "base_model": "spatial_temporal_ttv_smoke",
   "dataset_version": "dataset_v1",
-  "checkpoint_path": "C:\\Users\\vijay\\OneDrive\\Desktop\\text_to_video_final\\training\\checkpoints\\train_job_20260926_070048_548f5033\\final_model.pt",
-  "weights_sha256": "c7ed474b8fb91504c4e717bfa1a0e9b554e63a467a4114ab4ff6f458eb67e3b2",
-  "registered_at": "2026-09-26T07:02:05.276709Z",
+  "checkpoint_path": "C:\\Users\\vijay\\OneDrive\\Desktop\\text_to_video_final\\training\\checkpoints\\train_job_20261112_082614_375559c3\\final_model.pt",
+  "weights_sha256": "13ae4454f22bf3a3d623592c53d72e91b0fa6e2473ead9e777f99ce137391b2b",
+  "registered_at": "2026-11-12T08:27:26.364055Z",
   "training_config": {
     "model": {
       "name": "spatial_temporal_ttv_smoke",
@@ -38,16 +38,16 @@
       ]
     },
     "paths": {
-      "dataset_manifest": "generated\\training_jobs\\train_job_20260926_070048_548f5033\\manifest.jsonl",
-      "train_manifest": "generated\\training_jobs\\train_job_20260926_070048_548f5033\\manifest.jsonl",
-      "val_manifest": "generated\\training_jobs\\train_job_20260926_070048_548f5033\\manifest.jsonl",
-      "checkpoint_dir": "training/checkpoints/train_job_20260926_070048_548f5033",
+      "dataset_manifest": "generated\\training_jobs\\train_job_20261112_082614_375559c3\\manifest.jsonl",
+      "train_manifest": "generated\\training_jobs\\train_job_20261112_082614_375559c3\\manifest.jsonl",
+      "val_manifest": "generated\\training_jobs\\train_job_20261112_082614_375559c3\\manifest.jsonl",
+      "checkpoint_dir": "training/checkpoints/train_job_20261112_082614_375559c3",
       "models_dir": "models"
     }
   },
   "metrics": {
-    "best_val_loss": 0.7630150318145752,
-    "elapsed_seconds": 68.71,
+    "best_val_loss": 0.7539182513952255,
+    "elapsed_seconds": 66.14,
     "final_epoch": 1
   }
 }

@@ -195,7 +195,6 @@ class GenerationRequest(BaseModel):
     }
 
 
-<<<<<<< HEAD
 class ReferenceProcessRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048, description="Public reference media URL")
     reference_type: Optional[str] = Field(default=None, description="Optional hint: image or video")
@@ -234,12 +233,13 @@ class TrainingSessionRequest(BaseModel):
     model_config = {
         "protected_namespaces": ()
     }
-=======
+
+
 class GenerationDebugRequest(BaseModel):
     prompt: str = Field(..., min_length=3, description="Text prompt to trace through the pipeline")
     seed: Optional[int] = Field(default=42, description="Random seed for generation")
     fps: Optional[int] = Field(default=24, ge=1, le=60, description="Frames per second")
     num_frames: Optional[int] = Field(default=16, ge=1, le=120, description="Number of frames to generate")
     resolution: Optional[str] = Field(default="1280x720", description="Resolution string (e.g. 1280x720)")
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
+
 

@@ -1,55 +1,14 @@
 {
   "version": "ttv_lora_v001",
   "model_type": "lora",
-  "base_model": "spatial_temporal_ttv_smoke",
+  "base_model": "spatial_temporal_ttv_v1",
   "dataset_version": "dataset_v1",
-  "checkpoint_path": "C:\\Users\\vijay\\OneDrive\\Desktop\\text_to_video_final\\training\\checkpoints\\smoke\\final_model.pt",
-  "weights_sha256": "f9020286001fa8b02ff1e9e016418adfdccfd3c4c04530057c85f8aaa25e547d",
-  "registered_at": "2026-09-26T08:28:33.367923Z",
-  "training_config": {
-    "model": {
-      "name": "spatial_temporal_ttv_smoke",
-      "in_channels": 3,
-      "latent_channels": 32,
-      "num_frames": 4,
-      "vocab_size": 30522,
-      "max_prompt_length": 128,
-      "text_embed_dim": 64
-    },
-    "training": {
-      "device": "cpu",
-      "learning_rate": 0.001,
-      "weight_decay": 0.0,
-      "epochs": 2,
-      "batch_size": 1,
-      "gradient_accumulation_steps": 1,
-      "max_grad_norm": 1.0,
-      "seed": 42,
-      "use_lora": true,
-      "lora_rank": 4,
-      "lora_alpha": 8.0,
-      "lambda_temp": 0.5,
-      "lambda_align": 0.2
-    },
-    "preprocessing": {
-      "height": 64,
-      "width": 64,
-      "normalize_range": [
-        -1.0,
-        1.0
-      ]
-    },
-    "paths": {
-      "dataset_manifest": "training/datasets/dataset.jsonl",
-      "train_manifest": "training/datasets/dataset_train.jsonl",
-      "val_manifest": "training/datasets/dataset_val.jsonl",
-      "checkpoint_dir": "training/checkpoints/smoke",
-      "models_dir": "models"
-    }
-  },
+  "checkpoint_path": "C:\\Users\\vijay\\AppData\\Local\\Temp\\tmp8lih6zr5\\ttv_lora_v001.pt",
+  "weights_sha256": "dd55f84d38d232100897329fb9cc71aa683a965e9124ca7c0d480d2e7a39d196",
+  "registered_at": "2026-10-23T07:23:26.331231Z",
+  "training_config": {},
   "metrics": {
-    "best_val_loss": 0.8682918548583984,
-    "elapsed_seconds": 43.29,
-    "final_epoch": 2
+    "winner_reward": 0.6976,
+    "loser_reward": 0.68
   }
 }

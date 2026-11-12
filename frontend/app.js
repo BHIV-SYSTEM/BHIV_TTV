@@ -212,9 +212,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const startTrainingBtnText = document.getElementById("start-training-btn-text");
     const cliFallbackCard = document.getElementById("cli-fallback-card");
     const cliFallbackCode = document.getElementById("cli-fallback-code");
+    const automaticTrainingDetails = document.getElementById("training-auto-details");
+    const retryAutomaticTrainingBtn = document.getElementById("retry-auto-training-btn");
     let selectedManifestFile = null;
     let trainingPollInterval = null;
+    let automaticTrainingPollInterval = null;
     let activeTrainingJobId = null;
+    const automaticTrainingStartedRefs = new Set();
 
     async function refreshDatasetDashboard() {
         try {
@@ -438,6 +442,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const dimEl = document.getElementById(cfg.dimensionsId);
         const clearBtn = document.getElementById(cfg.clearBtnId);
         const statusEl = document.getElementById(cfg.statusId);
+        let urlDebounceTimer = null;
+        let processingUrl = false;
 
         function setStatus(text) {
             if (statusEl) statusEl.textContent = text;
@@ -512,7 +518,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 showToast("Please enter a reference URL.", "error");
                 return;
             }
+            if (processingUrl || (state.referenceId && state.referenceUrl === url)) return;
 
+            processingUrl = true;
             setStatus("Processing reference link...");
             if (processBtn) {
                 processBtn.disabled = true;
@@ -547,8 +555,9 @@ document.addEventListener("DOMContentLoaded", () => {
             } finally {
                 if (processBtn) {
                     processBtn.disabled = false;
-                    processBtn.textContent = "Process Reference";
+                    processBtn.textContent = "Retry Processing";
                 }
+                processingUrl = false;
             }
         }
 
@@ -580,6 +589,20 @@ document.addEventListener("DOMContentLoaded", () => {
             processBtn.addEventListener("click", processUrl);
         }
         if (urlInput) {
+            urlInput.addEventListener("input", () => {
+                clearTimeout(urlDebounceTimer);
+                const candidate = urlInput.value.trim();
+                if (!candidate) return;
+                let parsed;
+                try {
+                    parsed = new URL(candidate);
+                } catch (_) {
+                    return;
+                }
+                if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) return;
+                setStatus("Reference link detected; processing automatically...");
+                urlDebounceTimer = setTimeout(processUrl, 700);
+            });
             urlInput.addEventListener("keydown", (e) => {
                 if (e.key === "Enter") {
                     e.preventDefault();
@@ -648,6 +671,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 referenceType: refState.referenceType,
                 referenceUrl: refState.referenceUrl
             };
+            if (refState.referenceId) launchAutomaticTraining(refState);
         }
     });
 
@@ -1319,105 +1343,144 @@ document.addEventListener("DOMContentLoaded", () => {
         }, 1200);
     }
 
+    function renderAutomaticTrainingDetails(job) {
+        if (!automaticTrainingDetails) return;
+        const hardware = job.hardware || {};
+        const gpuRows = hardware.gpu_utilization;
+        const utilization = Array.isArray(gpuRows) && gpuRows.length
+            ? gpuRows.map(gpu => `GPU ${gpu.index}: ${gpu.utilization_percent}% (${gpu.memory_used_mib}/${gpu.memory_total_mib} MiB)`).join(", ")
+            : (job.cuda_available ? "GPU utilization unavailable" : "GPU not allocated");
+        const checkpoint = job.final_checkpoint || (job.checkpoints || []).slice(-1)[0] || "Pending";
+        const loss = typeof job.loss === "number" ? job.loss.toFixed(4) : "—";
+        const evaluation = typeof (job.metrics || {}).val_loss === "number"
+            ? job.metrics.val_loss.toFixed(4)
+            : "Pending";
+        automaticTrainingDetails.textContent = [
+            `Stage: ${job.stage || "preparing"}`,
+            `Epoch: ${job.epoch || 0}/${job.total_epochs || 0} • Progress: ${job.progress || 0}%`,
+            `Training loss: ${loss} • Evaluation loss: ${evaluation}`,
+            `Device: ${hardware.gpu_name || job.device || "Not allocated"} • ${utilization}`,
+            `Checkpoint: ${checkpoint}`
+        ].join("\n");
+    }
+
+    function pollAutomaticTrainingJob(jobId) {
+        clearInterval(automaticTrainingPollInterval);
+        let lastLogIndex = 0;
+
+        const poll = async () => {
+            try {
+                const statusResponse = await fetch(`/api/v1/training/auto/${jobId}`);
+                if (!statusResponse.ok) return;
+                const job = await statusResponse.json();
+                renderAutomaticTrainingDetails(job);
+
+                const logsResponse = await fetch(`/api/v1/training/auto/${jobId}/logs?offset=${lastLogIndex}`);
+                if (logsResponse.ok) {
+                    const logsData = await logsResponse.json();
+                    for (const lineText of logsData.logs || []) {
+                        let cls = "text-muted";
+                        if (lineText.includes("FAILED") || lineText.includes("[Error]") || lineText.includes("Exception")) cls = "text-danger";
+                        else if (lineText.includes("CUDA_UNAVAILABLE") || lineText.includes("unavailable")) cls = "text-warning";
+                        else if (lineText.includes("completed") || lineText.includes("Checkpoint")) cls = "text-success";
+                        else if (lineText.includes("[Worker]") || lineText.includes("[Config]") || lineText.includes("[Training]")) cls = "text-accent";
+                        appendTerminalLog(lineText, cls);
+                    }
+                    lastLogIndex += (logsData.logs || []).length;
+                    if (logsData.cli_fallback_command) {
+                        if (cliFallbackCode) cliFallbackCode.textContent = logsData.cli_fallback_command;
+                        if (cliFallbackCard) cliFallbackCard.classList.remove("hidden");
+                    }
+                }
+
+                if (job.status === "preparing" || job.status === "processing") {
+                    setTrainingBadge("running", job.stage.replaceAll("_", " "));
+                } else if (job.status === "queued") {
+                    setTrainingBadge("queued", "job queued");
+                } else if (job.status === "running") {
+                    setTrainingBadge("running", `training running (${job.progress || 0}%)`);
+                } else if (job.status === "CUDA_UNAVAILABLE") {
+                    clearInterval(automaticTrainingPollInterval);
+                    setTrainingBadge("CUDA_UNAVAILABLE", "CUDA unavailable");
+                    if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.remove("hidden");
+                    showToast(job.message || "GPU training is unavailable on this host.", "warning", 6000);
+                } else if (job.status === "completed") {
+                    clearInterval(automaticTrainingPollInterval);
+                    setTrainingBadge("completed", "Training Completed");
+                    if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.add("hidden");
+                    showToast("Automatic fine-tuning completed successfully.", "success");
+                } else if (job.status === "failed") {
+                    clearInterval(automaticTrainingPollInterval);
+                    setTrainingBadge("failed", "Training Failed");
+                    if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.remove("hidden");
+                    showToast(`Automatic training failed: ${job.error || "See training logs for details."}`, "error", 6000);
+                }
+            } catch (_) {
+                // Keep polling through transient network errors.
+            }
+        };
+
+        poll();
+        automaticTrainingPollInterval = setInterval(poll, 1200);
+    }
+
+    async function launchAutomaticTraining(refState, retry = false) {
+        const referenceId = refState && refState.referenceId;
+        if (!referenceId || (!retry && automaticTrainingStartedRefs.has(referenceId))) return;
+        automaticTrainingStartedRefs.add(referenceId);
+        if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.add("hidden");
+
+        const request = {
+            reference_id: referenceId,
+            base_model: document.getElementById("train-base-model")?.value || "SpatialTemporalTTVModel",
+            method: document.getElementById("train-method")?.value || "lora",
+            epochs: parseInt(document.getElementById("train-epochs")?.value || "10", 10),
+            learning_rate: parseFloat(document.getElementById("train-lr")?.value || "0.0001"),
+            batch_size: parseInt(document.getElementById("train-batch-size")?.value || "2", 10),
+            retry
+        };
+
+        setTrainingBadge("running", "preparing reference");
+        appendTerminalLog(`[Automatic] Starting training workflow for ${referenceId}...`, "text-accent");
+        try {
+            const response = await fetch("/api/v1/training/auto", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(request)
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || errorData.message || "Could not start automatic training.");
+            }
+            const job = await response.json();
+            activeTrainingJobId = job.job_id;
+            renderAutomaticTrainingDetails(job);
+            showToast("Reference accepted. Dataset preparation and training are running automatically.", "success");
+            pollAutomaticTrainingJob(job.job_id);
+        } catch (error) {
+            if (!retry) automaticTrainingStartedRefs.delete(referenceId);
+            setTrainingBadge("failed", "Automatic launch failed");
+            appendTerminalLog(`[Error] ${error.message}`, "text-danger");
+            if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.remove("hidden");
+            showToast(error.message, "error", 6000);
+        }
+    }
+
+    if (retryAutomaticTrainingBtn) {
+        retryAutomaticTrainingBtn.addEventListener("click", () => {
+            launchAutomaticTraining(trainReferenceState, true);
+        });
+    }
+
     if (startTrainingBtn) {
         startTrainingBtn.addEventListener("click", async () => {
-<<<<<<< HEAD
             const epochs = parseInt(document.getElementById("train-epochs")?.value || "10", 10);
             const lr = document.getElementById("train-lr")?.value || "0.0001";
             const batchSize = parseInt(document.getElementById("train-batch-size")?.value || "2", 10);
-=======
-            const epochs = document.getElementById("train-epochs")?.value || "10";
-            const lr = document.getElementById("train-lr")?.value || "0.0001";
-            const batchSize = document.getElementById("train-batch-size")?.value || "2";
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
             const method = document.getElementById("train-method")?.value || "lora";
             const baseModel = document.getElementById("train-base-model")?.value || "SpatialTemporalTTVModel";
 
             startTrainingBtn.disabled = true;
-<<<<<<< HEAD
-            trainingSessionStatus.textContent = "Session Active";
-            trainingSessionStatus.className = "badge badge-success";
-
-            function appendLog(text, cssClass = "text-muted") {
-                if (!trainingTerminalLog) return;
-                const logLine = document.createElement("div");
-                logLine.className = `log-line ${cssClass}`;
-                logLine.textContent = text;
-                trainingTerminalLog.appendChild(logLine);
-                trainingTerminalLog.scrollTop = trainingTerminalLog.scrollHeight;
-            }
-
-            appendLog(`[Launch] Initializing Fine-Tuning: method=${method}, epochs=${epochs}, lr=${lr}, batch=${batchSize}`, "text-accent");
-            if (trainReferenceState.referenceId || trainReferenceState.referenceUrl) {
-                appendLog(`[Reference] Attached reference: id=${trainReferenceState.referenceId || "none"}, url=${trainReferenceState.referenceUrl || "none"}, type=${trainReferenceState.referenceType || "auto"}`, "text-accent");
-                appendLog(`[Dataset] Ingesting reference into model training pipeline...`, "text-muted");
-            }
-
-            try {
-                const payload = {
-                    base_model: baseModel,
-                    method: method,
-                    epochs: epochs,
-                    learning_rate: lr,
-                    batch_size: batchSize,
-                    reference_id: trainReferenceState.referenceId,
-                    reference_url: trainReferenceState.referenceUrl,
-                    reference_type: trainReferenceState.referenceType
-                };
-
-                const res = await fetch("/api/v1/training/start", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.message || errData.detail || "Failed to start training session");
-                }
-
-                const data = await res.json();
-                if (Array.isArray(data.logs)) {
-                    data.logs.forEach(l => appendLog(l, "text-muted"));
-                }
-
-                showToast("Training session launched with reference!", "success", 4000);
-
-                // Poll for training job updates
-                const pollTimer = setInterval(async () => {
-                    try {
-                        const statusRes = await fetch(`/api/v1/training/status/${data.job_id}`);
-                        if (!statusRes.ok) return;
-                        const statusData = await statusRes.json();
-                        if (statusData.status === "completed") {
-                            clearInterval(pollTimer);
-                            startTrainingBtn.disabled = false;
-                            trainingSessionStatus.textContent = "Completed";
-                            trainingSessionStatus.className = "badge badge-success";
-                            if (Array.isArray(statusData.logs)) {
-                                statusData.logs.slice(data.logs.length).forEach(l => appendLog(l, "text-accent"));
-                            }
-                            showToast("Training session completed successfully!", "success", 5000);
-                        } else if (statusData.status === "failed") {
-                            clearInterval(pollTimer);
-                            startTrainingBtn.disabled = false;
-                            trainingSessionStatus.textContent = "Failed";
-                            trainingSessionStatus.className = "badge badge-danger";
-                            appendLog(`[Error] Training job failed.`, "text-accent");
-                            showToast("Training job encountered an error.", "error", 5000);
-                        }
-                    } catch (e) {
-                        // ignore network blips during polling
-                    }
-                }, 1500);
-
-            } catch (err) {
-                appendLog(`[Error] ${err.message}`, "text-accent");
-                trainingSessionStatus.textContent = "Failed";
-                trainingSessionStatus.className = "badge badge-danger";
-                startTrainingBtn.disabled = false;
-                showToast(err.message, "error", 5000);
-=======
             if (startTrainingBtnText) startTrainingBtnText.textContent = "Submitting Job...";
 
             setTrainingBadge("queued", "job queued");
@@ -1488,7 +1551,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 showToast(`Launch failed: ${err.message}`, "error");
                 startTrainingBtn.disabled = false;
                 if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
             }
         });
     }

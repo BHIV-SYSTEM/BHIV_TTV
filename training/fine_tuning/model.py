@@ -27,7 +27,8 @@ class TextEncoder(nn.Module):
         # Optional pretrained semantic backbone
         self._hf_model = None
         self._hf_proj = None
-        self._init_semantic_backbone()
+        if self.vocab_size >= 30522:
+            self._init_semantic_backbone()
 
     def _init_semantic_backbone(self):
         try:
@@ -36,8 +37,6 @@ class TextEncoder(nn.Module):
                 "sentence-transformers/all-MiniLM-L6-v2",
                 local_files_only=True
             )
-            for param in hf.parameters():
-                param.requires_grad = False
             self._hf_model = hf
             self._hf_proj = nn.Linear(384, self.embed_dim)
         except Exception:

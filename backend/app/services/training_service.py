@@ -222,6 +222,7 @@ class TrainingJobManager:
     def __init__(self):
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._gpu_metrics_cache: Dict[str, Any] = {"sampled_at": 0.0, "devices": None}
         self.jobs_dir = settings.get_absolute_path("generated/training_jobs")
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self._load_persisted_jobs()
@@ -267,6 +268,40 @@ class TrainingJobManager:
         except Exception as e:
             logger.error(f"Failed to persist training job state {job_id}: {e}")
 
+    def _read_gpu_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        now = time.monotonic()
+        if now - self._gpu_metrics_cache["sampled_at"] < 2:
+            return self._gpu_metrics_cache["devices"]
+
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,utilization.gpu,memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            )
+            devices = []
+            for line in result.stdout.splitlines():
+                values = [value.strip() for value in line.split(",")]
+                if len(values) != 4:
+                    continue
+                devices.append({
+                    "index": int(values[0]),
+                    "utilization_percent": int(values[1]),
+                    "memory_used_mib": int(values[2]),
+                    "memory_total_mib": int(values[3]),
+                })
+            self._gpu_metrics_cache = {"sampled_at": now, "devices": devices or None}
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            logger.warning("GPU utilization metrics are unavailable: %s", exc)
+            self._gpu_metrics_cache = {"sampled_at": now, "devices": None}
+        return self._gpu_metrics_cache["devices"]
+
     async def create_job(
         self,
         manifest_data: Union[str, Path, bytes, List[Dict[str, Any]]],
@@ -275,8 +310,6 @@ class TrainingJobManager:
     ) -> Dict[str, Any]:
         async with self._lock:
             job_id = f"train_job_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-            job_dir = self.jobs_dir / job_id
-            job_dir.mkdir(parents=True, exist_ok=True)
 
             # 1. Parse & validate manifest records
             records, source_path = parse_manifest_records(manifest_data)
@@ -287,8 +320,20 @@ class TrainingJobManager:
                     records, _ = parse_manifest_records(p.read_text(encoding="utf-8"))
 
             validation_stats = validate_manifest_records(records)
+            if not validation_stats["valid"]:
+                reasons = [
+                    reason
+                    for issue in validation_stats["issues"]
+                    for reason in issue.get("reasons", [])
+                ]
+                raise ValueError(
+                    "Dataset validation failed: "
+                    + ("; ".join(reasons) if reasons else "the dataset is empty.")
+                )
 
             # Write working copy of manifest for this training job
+            job_dir = self.jobs_dir / job_id
+            job_dir.mkdir(parents=True, exist_ok=True)
             manifest_target = job_dir / "manifest.jsonl"
             with open(manifest_target, "w", encoding="utf-8") as f:
                 for r in records:
@@ -396,9 +441,11 @@ class TrainingJobManager:
                 "manifest_stats": validation_stats,
                 "manifest_path": manifest_path_str,
                 "cuda_available": cuda_available,
+                "device": hw_profile.get("device_type", "cpu"),
                 "hardware": hw_profile,
                 "cli_fallback_command": cli_fallback_command,
                 "checkpoints": [],
+                "final_checkpoint": None,
                 "metrics": {},
                 "logs": initial_logs,
                 "error": cuda_msg if not cuda_available else None,
@@ -446,7 +493,9 @@ class TrainingJobManager:
                     errors="replace"
                 )
 
-                epoch_regex = re.compile(r"Epoch\s*\[(\d+)/(\d+)\]")
+                epoch_regex = re.compile(
+                    r"Epoch\s*\[(\d+)/(\d+)\].*?Train Loss:\s*([0-9.eE+-]+).*?Val Loss:\s*([0-9.eE+-]+)"
+                )
                 checkpoint_regex = re.compile(r"Checkpoint\s*(?:saved|Path):\s*([^\r\n]+)", re.IGNORECASE)
 
                 if process.stdout:
@@ -463,12 +512,19 @@ class TrainingJobManager:
                                 pct = int((cur_ep / tot_ep) * 100)
                                 self._jobs[job_id]["progress"] = min(99, max(5, pct))
                                 self._jobs[job_id]["stage"] = f"epoch_{cur_ep}_of_{tot_ep}"
+                                self._jobs[job_id]["epoch"] = cur_ep
+                                self._jobs[job_id]["total_epochs"] = tot_ep
+                                self._jobs[job_id]["loss"] = float(match.group(3))
+                                self._jobs[job_id]["metrics"]["train_loss"] = float(match.group(3))
+                                self._jobs[job_id]["metrics"]["val_loss"] = float(match.group(4))
 
                             ckpt_match = checkpoint_regex.search(line)
                             if ckpt_match:
                                 ckpt_path = ckpt_match.group(1).strip()
                                 if ckpt_path not in self._jobs[job_id]["checkpoints"]:
                                     self._jobs[job_id]["checkpoints"].append(ckpt_path)
+                                if Path(ckpt_path).name == "final_model.pt":
+                                    self._jobs[job_id]["final_checkpoint"] = ckpt_path
 
                             self._jobs[job_id]["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
@@ -500,7 +556,11 @@ class TrainingJobManager:
         t.start()
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        return self._jobs.get(job_id)
+        job = self._jobs.get(job_id)
+        if job and job.get("cuda_available"):
+            job["hardware"] = dict(job.get("hardware") or {})
+            job["hardware"]["gpu_utilization"] = self._read_gpu_metrics()
+        return job
 
     def get_job_logs(self, job_id: str, offset: int = 0, limit: Optional[int] = None) -> Optional[Dict[str, Any]]:
         job = self._jobs.get(job_id)
