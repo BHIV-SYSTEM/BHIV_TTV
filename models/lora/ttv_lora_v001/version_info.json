@@ -3,12 +3,12 @@
   "model_type": "lora",
   "base_model": "spatial_temporal_ttv_v1",
   "dataset_version": "dataset_v1",
-  "checkpoint_path": "C:\\Users\\vijay\\AppData\\Local\\Temp\\tmp8lih6zr5\\ttv_lora_v001.pt",
-  "weights_sha256": "dd55f84d38d232100897329fb9cc71aa683a965e9124ca7c0d480d2e7a39d196",
-  "registered_at": "2026-10-23T07:23:26.331231Z",
+  "checkpoint_path": "C:\\Users\\vijay\\AppData\\Local\\Temp\\tmpat6ai_l8\\ttv_lora_v001.pt",
+  "weights_sha256": "ea892d2e43d6d8261e4969f527e6015b0b00757f4ebb8f3ed75f2d5c7129440f",
+  "registered_at": "2026-11-13T08:00:20.516972Z",
   "training_config": {},
   "metrics": {
-    "winner_reward": 0.6976,
-    "loser_reward": 0.68
+    "winner_reward": 0.6919,
+    "loser_reward": 0.6816
   }
 }
