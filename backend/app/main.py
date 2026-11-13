@@ -8,11 +8,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from app.core.config import settings
 from app.core.logging import logger, telemetry
 from app.core.exceptions import TTVException, ValidationError, GovernanceViolationError
-<<<<<<< HEAD
 from app.api.routes import generate, jobs, videos, health, training
-=======
-from app.api.routes import generate, jobs, videos, health, dataset, training
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
