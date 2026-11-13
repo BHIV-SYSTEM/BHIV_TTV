@@ -153,7 +153,7 @@ Configure the following secrets under **Settings > Secrets and variables > Actio
 5. Access the Web UI in your browser:
    `http://localhost:8021/`
 
-### Using Helper Scripts
+### Using Helper Script
 
 ```bash
 # Start deployment and run healthcheck
