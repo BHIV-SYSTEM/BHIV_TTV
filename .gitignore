@@ -51,6 +51,8 @@ scratch/
 *.safetensors
 training/checkpoints/*.pt
 *.mp4
+data/datasets/
+dataset/ttv_data/training_data/
 
 # Generated Media
 generated/images/*

@@ -258,7 +258,10 @@ async def launch_or_queue_training_job(
     method: str = Form("lora"),
     epochs: int = Form(10),
     learning_rate: float = Form(0.0001),
-    batch_size: int = Form(2),
+    batch_size: int = Form(1),
+    lora_rank: int = Form(4),
+    lora_alpha: float = Form(16.0),
+    precision: str = Form("bfloat16"),
     version_name: Optional[str] = Form(None),
 ):
     """
@@ -283,7 +286,10 @@ async def launch_or_queue_training_job(
             "method": body.get("method", "lora"),
             "epochs": int(body.get("epochs", 10)),
             "learning_rate": float(body.get("learning_rate", 0.0001)),
-            "batch_size": int(body.get("batch_size", 2)),
+            "batch_size": int(body.get("batch_size", 1)),
+            "lora_rank": int(body.get("lora_rank", 4)),
+            "lora_alpha": float(body.get("lora_alpha", 16.0)),
+            "precision": body.get("precision", "bfloat16"),
             "version_name": body.get("version_name"),
         }
         manifest_raw = body.get("manifest") or body.get("manifest_content") or body.get("manifest_path")
@@ -301,6 +307,9 @@ async def launch_or_queue_training_job(
             "epochs": epochs,
             "learning_rate": learning_rate,
             "batch_size": batch_size,
+            "lora_rank": lora_rank,
+            "lora_alpha": lora_alpha,
+            "precision": precision,
             "version_name": version_name,
         }
         if manifest_file and manifest_file.filename:
@@ -399,3 +408,60 @@ async def validate_manifest_endpoint(
     result = validate_manifest_records(records)
     result["manifest_path"] = resolved_path or manifest_filename
     return ManifestValidationResponse(**result)
+
+
+@router.post("/preflight")
+async def training_preflight_endpoint(request: Request):
+    """
+    Executes comprehensive 10 GB VRAM preflight and memory feasibility check.
+    Verifies GPU, free VRAM, manifest validity, and hyperparameters.
+    Returns readiness verdict: READY, READY_WITH_LIMITATIONS, or NOT_READY.
+    """
+    from training.preflight import run_training_preflight
+
+    manifest_path = None
+    config = None
+    dry_run = False
+
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            manifest_path = body.get("manifest_path")
+            config = body.get("config")
+            dry_run = bool(body.get("dry_run", False))
+        except Exception:
+            pass
+
+    report = run_training_preflight(config=config, manifest_path=manifest_path, dry_run=dry_run)
+    return report
+
+
+@router.get("/hardware")
+async def training_hardware_endpoint():
+    """Returns dynamic hardware status: GPU model, VRAM (total/free/allocated), RAM, and disk."""
+    from training.utils.hardware import detect_hardware
+    return detect_hardware()
+
+
+@router.get("/checkpoints")
+async def list_checkpoints_endpoint():
+    """Lists saved model and LoRA checkpoints across training runs."""
+    ckpt_root = Path("training/checkpoints")
+    results = []
+
+    if ckpt_root.exists():
+        for f in sorted(ckpt_root.glob("**/*.pt")):
+            try:
+                stat = f.stat()
+                results.append({
+                    "filename": f.name,
+                    "relative_path": str(f.relative_to(Path.cwd()) if f.is_relative_to(Path.cwd()) else f),
+                    "size_mb": round(stat.st_size / (1024**2), 2),
+                    "modified_at": stat.st_mtime,
+                    "is_lora": "lora" in f.name.lower() or "lora" in str(f).lower(),
+                })
+            except Exception:
+                pass
+
+    return {"checkpoints": results, "total": len(results)}

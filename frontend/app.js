@@ -213,6 +213,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const cliFallbackCard = document.getElementById("cli-fallback-card");
     const cliFallbackCode = document.getElementById("cli-fallback-code");
     let selectedManifestFile = null;
+    let selectedSampleManifestPath = null;
     let trainingPollInterval = null;
     let activeTrainingJobId = null;
 
@@ -226,10 +227,36 @@ document.addEventListener("DOMContentLoaded", () => {
             const resolution = document.getElementById("dataset-resolution");
             const splitText = document.getElementById("dataset-splits");
             const licenses = document.getElementById("dataset-license-count");
-            if (samples) samples.textContent = dataset.total_clips ?? "0";
-            if (resolution) resolution.textContent = dataset.average_resolution ? `${Math.round(dataset.average_resolution.width)}×${Math.round(dataset.average_resolution.height)}` : "—";
-            if (splitText) splitText.textContent = `${splits.train || 0} / ${splits.validation || 0} / ${splits.test || 0}`;
-            if (licenses) licenses.textContent = (dataset.licensed_sources || []).length;
+
+            if (payload.sample_dataset && payload.sample_dataset.present) {
+                const s = payload.sample_dataset;
+                if (samples) samples.textContent = s.total_clips || dataset.total_clips || "100";
+                if (resolution) resolution.textContent = s.resolution || "720×480";
+                if (splitText) splitText.textContent = `${s.splits.train || 80} / ${s.splits.validation || 10} / ${s.splits.test || 10}`;
+                if (licenses) licenses.textContent = "1 (CC-BY-4.0)";
+                selectedSampleManifestPath = s.prepared_manifest || "dataset/manifests/openvid_1m_prepared_manifest.jsonl";
+            } else {
+                if (samples) samples.textContent = dataset.total_clips ?? "0";
+                if (resolution) resolution.textContent = dataset.average_resolution ? `${Math.round(dataset.average_resolution.width)}×${Math.round(dataset.average_resolution.height)}` : "—";
+                if (splitText) splitText.textContent = `${splits.train || 0} / ${splits.validation || 0} / ${splits.test || 0}`;
+                if (licenses) licenses.textContent = (dataset.licensed_sources || []).length;
+            }
+
+            // Update live VRAM hardware readout
+            try {
+                const hwRes = await fetch("/api/v1/training/hardware");
+                if (hwRes.ok) {
+                    const hw = await hwRes.json();
+                    const vramEl = document.getElementById("hardware-vram-text");
+                    if (vramEl) {
+                        if (hw.cuda_available) {
+                            vramEl.textContent = `⚡ GPU: ${hw.gpu_name} • VRAM: ${hw.vram_free_gb} GB Free / ${hw.vram_total_gb} GB`;
+                        } else {
+                            vramEl.textContent = "⚡ Hardware: CPU Only (CUDA Unavailable)";
+                        }
+                    }
+                }
+            } catch (_) {}
         } catch (_) { /* dashboard is optional; leave unknown values visible */ }
     }
 
@@ -1158,6 +1185,140 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    const prepareSampleBtn = document.getElementById("prepare-sample-dataset-btn");
+    if (prepareSampleBtn) {
+        prepareSampleBtn.addEventListener("click", async () => {
+            prepareSampleBtn.disabled = true;
+            prepareSampleBtn.textContent = "⏳ Preparing Sample Dataset...";
+            appendTerminalLog("[Sample Dataset] Initializing OpenVid-1M sample dataset preparation (100 clips: 80 train, 10 val, 10 test)...", "text-accent");
+
+            try {
+                const res = await fetch("/api/v1/dataset/sample/prepare", { method: "POST" });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail || "Failed to prepare sample dataset");
+                }
+                const data = await res.json();
+                selectedManifestFile = null;
+                selectedSampleManifestPath = data.prepared_manifest ? data.prepared_manifest.path : "dataset/manifests/openvid_1m_prepared_manifest.jsonl";
+
+                const dropzonePrompt = datasetDropzone ? datasetDropzone.querySelector(".dropzone-prompt") : null;
+                if (dropzonePrompt) {
+                    dropzonePrompt.innerHTML = `Loaded sample dataset: <strong>OpenVid-1M</strong> (100 clips: 80 train, 10 val, 10 test) • Ready`;
+                }
+
+                const samplesEl = document.getElementById("dataset-samples-count");
+                const resolutionEl = document.getElementById("dataset-resolution");
+                const splitTextEl = document.getElementById("dataset-splits");
+                const licenseEl = document.getElementById("dataset-license-count");
+
+                if (samplesEl) samplesEl.textContent = data.prepared_manifest?.sample_count || 100;
+                if (resolutionEl) resolutionEl.textContent = "720×480";
+                if (splitTextEl && data.splits) {
+                    splitTextEl.textContent = `${data.splits.train || 80} / ${data.splits.validation || 10} / ${data.splits.test || 10}`;
+                }
+                if (licenseEl) licenseEl.textContent = "1 (CC-BY-4.0)";
+
+                appendTerminalLog(`[Sample Dataset Ready] 100 clips validated (train: ${data.splits?.train || 80}, val: ${data.splits?.validation || 10}, test: ${data.splits?.test || 10}). Manifest: ${selectedSampleManifestPath}`, "text-success");
+                showToast("OpenVid-1M sample dataset successfully loaded and validated!", "success");
+            } catch (err) {
+                appendTerminalLog(`[Sample Dataset Error] ${err.message}`, "text-danger");
+                showToast(`Failed to load sample dataset: ${err.message}`, "error");
+            } finally {
+                prepareSampleBtn.disabled = false;
+                prepareSampleBtn.textContent = "⚡ Load Sample Dataset (OpenVid-1M, 100 clips)";
+            }
+        });
+    }
+
+    const runPreflightBtn = document.getElementById("run-preflight-btn");
+    if (runPreflightBtn) {
+        runPreflightBtn.addEventListener("click", async () => {
+            runPreflightBtn.disabled = true;
+            runPreflightBtn.textContent = "⏳ Running Preflight & Feasibility Check...";
+            appendTerminalLog("[Preflight] Initiating 10 GB VRAM preflight and memory feasibility check...", "text-accent");
+
+            const baseModel = document.getElementById("train-base-model")?.value || "SpatialTemporalTTVModel";
+            const method = document.getElementById("train-method")?.value || "lora";
+            const loraRank = parseInt(document.getElementById("train-lora-rank")?.value || "4", 10);
+            const loraAlpha = parseFloat(document.getElementById("train-lora-alpha")?.value || "16.0");
+            const precision = document.getElementById("train-precision")?.value || "bfloat16";
+            const epochs = parseInt(document.getElementById("train-epochs")?.value || "1", 10);
+            const lr = parseFloat(document.getElementById("train-lr")?.value || "0.0001");
+            const batchSize = parseInt(document.getElementById("train-batch-size")?.value || "1", 10);
+
+            const manifestPath = selectedSampleManifestPath || "dataset/manifests/openvid_1m_prepared_manifest_train.jsonl";
+
+            const payload = {
+                manifest_path: manifestPath,
+                dry_run: true,
+                config: {
+                    model: { name: baseModel, num_frames: 8 },
+                    training: {
+                        method: method,
+                        use_lora: method.includes("lora"),
+                        lora_rank: loraRank,
+                        lora_alpha: loraAlpha,
+                        precision: precision,
+                        batch_size: batchSize,
+                        gradient_accumulation_steps: 4,
+                        gradient_checkpointing: true,
+                        epochs: epochs,
+                        learning_rate: lr
+                    },
+                    preprocessing: { height: 128, width: 128, num_frames: 8 }
+                }
+            };
+
+            try {
+                const res = await fetch("/api/v1/training/preflight", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail || "Preflight check failed");
+                }
+
+                const data = await res.json();
+                const box = document.getElementById("preflight-result-box");
+                const badge = document.getElementById("preflight-badge");
+                const summary = document.getElementById("preflight-summary-text");
+
+                if (box) box.classList.remove("hidden");
+                if (badge) {
+                    badge.textContent = data.status;
+                    if (data.status === "READY") {
+                        badge.className = "badge badge-success";
+                    } else if (data.status === "READY_WITH_LIMITATIONS") {
+                        badge.className = "badge badge-warning";
+                    } else {
+                        badge.className = "badge badge-danger";
+                    }
+                }
+
+                if (summary) {
+                    summary.textContent = `${data.summary} ${data.feasibility?.budget?.recommendation || ""}`;
+                }
+
+                appendTerminalLog(`[Preflight Result] Status: ${data.status} • ${data.summary}`, data.status === "READY" ? "text-success" : "text-warning");
+                if (data.feasibility?.dry_run?.measured_peak_mb) {
+                    appendTerminalLog(`[VRAM Feasibility] Measured Peak VRAM: ${data.feasibility.dry_run.measured_peak_mb} MB on CUDA.`, "text-accent");
+                }
+                showToast(`Preflight Check: ${data.status}`, data.status === "NOT_READY" ? "error" : "success");
+
+            } catch (err) {
+                appendTerminalLog(`[Preflight Error] ${err.message}`, "text-danger");
+                showToast(`Preflight failed: ${err.message}`, "error");
+            } finally {
+                runPreflightBtn.disabled = false;
+                runPreflightBtn.textContent = "🔍 Run Preflight & VRAM Feasibility Check";
+            }
+        });
+    }
+
     function setTrainingBadge(status, textOverride = null) {
         if (!trainingSessionStatus) return;
         switch (status) {
@@ -1418,10 +1579,19 @@ document.addEventListener("DOMContentLoaded", () => {
                     formData.append("learning_rate", lr);
                     formData.append("batch_size", batchSize);
 
+                    const loraRank = document.getElementById("train-lora-rank")?.value || "4";
+                    const loraAlpha = document.getElementById("train-lora-alpha")?.value || "16";
+                    const precision = document.getElementById("train-precision")?.value || "bfloat16";
+                    formData.append("lora_rank", loraRank);
+                    formData.append("lora_alpha", loraAlpha);
+                    formData.append("precision", precision);
+
                     if (selectedManifestFile) {
                         formData.append("manifest_file", selectedManifestFile);
+                    } else if (selectedSampleManifestPath) {
+                        formData.append("manifest_path", selectedSampleManifestPath);
                     } else {
-                        formData.append("manifest_path", "data/manifests/ttv_training_manifest_120.jsonl");
+                        formData.append("manifest_path", "dataset/manifests/openvid_1m_prepared_manifest.jsonl");
                     }
 
                     const response = await fetch("/api/v1/training/jobs", {

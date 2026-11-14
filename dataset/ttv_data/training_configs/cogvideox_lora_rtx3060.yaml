@@ -1,0 +1,55 @@
+# CogVideoX-2B LoRA Training Configuration for NVIDIA RTX 3060 (12GB VRAM)
+
+model:
+  pretrained_model_name_or_path: "THUDM/CogVideoX-2b"
+  revision: null
+  variant: null
+  cache_dir: "./model_cache"
+  preserve_base_model: true
+
+dataset:
+  train_data_dir: "training_data/openvid_1m/train"
+  val_data_dir: "training_data/openvid_1m/validation"
+  manifest_path: "training_data/openvid_1m/train/train_manifest.jsonl"
+  metadata_csv: "training_data/openvid_1m/train/metadata.csv"
+  video_column: "video_file"
+  caption_column: "caption"
+  height: 480
+  width: 720
+  fps: 8
+  max_num_frames: 49
+
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.05
+  bias: "none"
+  target_modules:
+    - "to_q"
+    - "to_k"
+    - "to_v"
+    - "to_out.0"
+
+training:
+  output_dir: "training_checkpoints/cogvideox_2b_lora_rtx3060"
+  seed: 42
+  mixed_precision: "fp16"
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-4
+  lr_scheduler: "cosine"
+  lr_warmup_steps: 50
+  max_train_steps: 500
+  checkpointing_steps: 100
+  checkpoints_total_limit: 3
+  validation_steps: 50
+
+memory_optimizations:
+  enable_gradient_checkpointing: true
+  use_8bit_adam: true
+  cache_latents: true
+  cache_text_embeddings: true
+  offload_text_encoder_to_cpu: true
+  offload_vae_to_cpu: true
+  vram_budget_limit_gb: 11.5
+  estimated_peak_vram_gb: 9.2

@@ -325,16 +325,19 @@ class TrainingJobManager:
                 },
                 "training": {
                     "device": "cuda" if cuda_available else "cpu",
+                    "precision": config.get("precision", "bfloat16"),
                     "learning_rate": learning_rate,
                     "weight_decay": 0.01,
                     "epochs": epochs,
                     "batch_size": batch_size,
-                    "gradient_accumulation_steps": 1,
+                    "gradient_accumulation_steps": int(config.get("gradient_accumulation_steps", 4)),
+                    "gradient_checkpointing": True,
                     "max_grad_norm": 1.0,
                     "seed": 42,
                     "use_lora": method in ("lora", "temporal_only"),
-                    "lora_rank": 8,
-                    "lora_alpha": 16.0
+                    "lora_rank": int(config.get("lora_rank", 4)),
+                    "lora_alpha": float(config.get("lora_alpha", 16.0)),
+                    "lora_dropout": float(config.get("lora_dropout", 0.05)),
                 },
                 "preprocessing": {
                     "height": 128,

@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 
 class LoRALinear(nn.Module):
@@ -31,10 +31,12 @@ class LoRALinear(nn.Module):
             self.base_layer.bias.requires_grad = False
 
         if rank > 0:
+            dev = base_layer.weight.device
+            dt = base_layer.weight.dtype
             # Down-projection A (initialized with Kaiming uniform)
-            self.lora_A = nn.Parameter(torch.zeros(rank, self.in_features))
+            self.lora_A = nn.Parameter(torch.zeros(rank, self.in_features, device=dev, dtype=dt))
             # Up-projection B (initialized with zeros)
-            self.lora_B = nn.Parameter(torch.zeros(self.out_features, rank))
+            self.lora_B = nn.Parameter(torch.zeros(self.out_features, rank, device=dev, dtype=dt))
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
             self.dropout = nn.Dropout(p=dropout) if dropout > 0.0 else nn.Identity()
@@ -74,8 +76,10 @@ class LoRAConv1d(nn.Module):
             self.base_layer.bias.requires_grad = False
 
         if rank > 0:
-            self.lora_A = nn.Conv1d(base_layer.in_channels, rank, kernel_size=1, bias=False)
-            self.lora_B = nn.Conv1d(rank, base_layer.out_channels, kernel_size=1, bias=False)
+            dev = base_layer.weight.device
+            dt = base_layer.weight.dtype
+            self.lora_A = nn.Conv1d(base_layer.in_channels, rank, kernel_size=1, bias=False, device=dev, dtype=dt)
+            self.lora_B = nn.Conv1d(rank, base_layer.out_channels, kernel_size=1, bias=False, device=dev, dtype=dt)
             nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B.weight)
             self.dropout = nn.Dropout(p=dropout) if dropout > 0.0 else nn.Identity()
@@ -115,8 +119,10 @@ class LoRAConv2d(nn.Module):
             self.base_layer.bias.requires_grad = False
 
         if rank > 0:
-            self.lora_A = nn.Conv2d(base_layer.in_channels, rank, kernel_size=1, bias=False)
-            self.lora_B = nn.Conv2d(rank, base_layer.out_channels, kernel_size=1, bias=False)
+            dev = base_layer.weight.device
+            dt = base_layer.weight.dtype
+            self.lora_A = nn.Conv2d(base_layer.in_channels, rank, kernel_size=1, bias=False, device=dev, dtype=dt)
+            self.lora_B = nn.Conv2d(rank, base_layer.out_channels, kernel_size=1, bias=False, device=dev, dtype=dt)
             nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B.weight)
             self.dropout = nn.Dropout2d(p=dropout) if dropout > 0.0 else nn.Identity()
@@ -136,6 +142,7 @@ def apply_lora_to_model(
     model: nn.Module,
     rank: int = 4,
     alpha: float = 8.0,
+    dropout: float = 0.0,
     target_names: Optional[List[str]] = None
 ) -> nn.Module:
     """
@@ -145,24 +152,38 @@ def apply_lora_to_model(
     if target_names is None:
         target_names = ["to_q", "to_k", "to_v", "proj", "temporal_conv", "temporal_proj"]
 
-    # First freeze all model parameters
-    for param in model.parameters():
-        param.requires_grad = False
+    # First freeze all non-LoRA parameters
+    for name, param in model.named_parameters():
+        if "lora_" not in name:
+            param.requires_grad = False
 
     # Substitute target layers
     for name, module in list(model.named_children()):
         if any(t in name for t in target_names):
-            if isinstance(module, nn.Linear):
-                setattr(model, name, LoRALinear(module, rank=rank, alpha=alpha))
+            if isinstance(module, (LoRALinear, LoRAConv1d, LoRAConv2d)):
+                if module.lora_A is not None:
+                    module.lora_A.weight.requires_grad = True
+                if module.lora_B is not None:
+                    module.lora_B.weight.requires_grad = True
+            elif isinstance(module, nn.Linear):
+                setattr(model, name, LoRALinear(module, rank=rank, alpha=alpha, dropout=dropout))
             elif isinstance(module, nn.Conv1d):
-                setattr(model, name, LoRAConv1d(module, rank=rank, alpha=alpha))
+                setattr(model, name, LoRAConv1d(module, rank=rank, alpha=alpha, dropout=dropout))
             elif isinstance(module, nn.Conv2d):
-                setattr(model, name, LoRAConv2d(module, rank=rank, alpha=alpha))
+                setattr(model, name, LoRAConv2d(module, rank=rank, alpha=alpha, dropout=dropout))
         else:
             # Recurse
-            apply_lora_to_model(module, rank=rank, alpha=alpha, target_names=target_names)
+            apply_lora_to_model(module, rank=rank, alpha=alpha, dropout=dropout, target_names=target_names)
 
     return model
+
+
+def get_trainable_parameters(model: nn.Module) -> Tuple[int, int, float]:
+    """Returns (trainable_params, total_params, trainable_ratio_percent)."""
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    ratio = (100.0 * trainable / total) if total > 0 else 0.0
+    return trainable, total, ratio
 
 
 def get_lora_state_dict(model: nn.Module) -> Dict[str, torch.Tensor]:

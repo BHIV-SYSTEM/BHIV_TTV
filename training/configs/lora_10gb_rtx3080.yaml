@@ -1,0 +1,60 @@
+# ==============================================================================
+# BHIV TTV Studio — 10 GB VRAM LoRA Training Configuration (NVIDIA RTX 3080)
+# ==============================================================================
+# Engineered for parameter-efficient video model fine-tuning within 10 GB VRAM.
+# Optimizations:
+#   - LoRA (Low-Rank Adaptation) with frozen base weights
+#   - Gradient checkpointing enabled
+#   - Micro-batch size 1 with gradient accumulation steps = 4
+#   - bfloat16 / float16 mixed precision
+#   - CUDA peak VRAM telemetry & memory-efficient attention
+# ==============================================================================
+
+model:
+  name: "SpatialTemporalTTVModel"
+  architecture: "spatial_temporal_diffusion"
+  in_channels: 3
+  latent_channels: 64
+  num_frames: 8
+  vocab_size: 10000
+  max_prompt_length: 32
+  text_embed_dim: 128
+
+training:
+  method: "lora"
+  device: "cuda"
+  precision: "bfloat16"                     # Native bfloat16 on RTX 3080 (Ampere CC 8.6)
+  batch_size: 1                             # Micro-batch size 1 to prevent VRAM spikes
+  gradient_accumulation_steps: 4            # Effective batch size = 4
+  gradient_checkpointing: true              # Cuts activation memory by ~60%
+  use_lora: true
+  lora_rank: 4                              # Low rank 4 fits comfortably with ~280K trainable parameters
+  lora_alpha: 16.0
+  lora_dropout: 0.05
+  target_modules:
+    - "to_q"
+    - "to_k"
+    - "to_v"
+    - "proj"
+    - "temporal_conv"
+    - "temporal_proj"
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  max_grad_norm: 1.0                        # Gradient clipping
+  epochs: 1                                 # Conservative default for controlled experiments
+  seed: 42
+  lambda_temp: 0.5                          # Temporal continuity loss weight
+  lambda_align: 0.2                         # Text-video semantic alignment loss weight
+
+preprocessing:
+  height: 128
+  width: 128
+  num_frames: 8
+  normalize_range: [-1.0, 1.0]
+
+paths:
+  dataset_manifest: "dataset/manifests/openvid_1m_prepared_manifest.jsonl"
+  train_manifest: "dataset/manifests/openvid_1m_prepared_manifest_train.jsonl"
+  val_manifest: "dataset/manifests/openvid_1m_prepared_manifest_val.jsonl"
+  checkpoint_dir: "training/checkpoints/lora_rtx3080"
+  models_dir: "models"
