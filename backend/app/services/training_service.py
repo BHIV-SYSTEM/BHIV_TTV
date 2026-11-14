@@ -30,6 +30,7 @@ def check_cuda_availability() -> Tuple[bool, str, Dict[str, Any]]:
     Supports environment flag TTV_FORCE_CUDA_AVAILABLE for simulated test environments.
     """
     force_cuda = os.environ.get("TTV_FORCE_CUDA_AVAILABLE", "").strip().lower() in ("1", "true", "yes")
+    force_no_cuda = os.environ.get("TTV_FORCE_CUDA_UNAVAILABLE", "").strip().lower() in ("1", "true", "yes")
 
     hardware_info: Dict[str, Any] = {
         "torch_available": TORCH_AVAILABLE,
@@ -40,6 +41,11 @@ def check_cuda_availability() -> Tuple[bool, str, Dict[str, Any]]:
         "vram_total_gb": 0.0,
         "device_type": "cpu",
     }
+
+    if force_no_cuda:
+        hardware_info["cuda_available"] = False
+        hardware_info["device_type"] = "cpu"
+        return False, "CUDA is unavailable (Environment Forced)", hardware_info
 
     if force_cuda:
         hardware_info["cuda_available"] = True
@@ -319,16 +325,19 @@ class TrainingJobManager:
                 },
                 "training": {
                     "device": "cuda" if cuda_available else "cpu",
+                    "precision": config.get("precision", "bfloat16"),
                     "learning_rate": learning_rate,
                     "weight_decay": 0.01,
                     "epochs": epochs,
                     "batch_size": batch_size,
-                    "gradient_accumulation_steps": 1,
+                    "gradient_accumulation_steps": int(config.get("gradient_accumulation_steps", 4)),
+                    "gradient_checkpointing": True,
                     "max_grad_norm": 1.0,
                     "seed": 42,
                     "use_lora": method in ("lora", "temporal_only"),
-                    "lora_rank": 8,
-                    "lora_alpha": 16.0
+                    "lora_rank": int(config.get("lora_rank", 4)),
+                    "lora_alpha": float(config.get("lora_alpha", 16.0)),
+                    "lora_dropout": float(config.get("lora_dropout", 0.05)),
                 },
                 "preprocessing": {
                     "height": 128,

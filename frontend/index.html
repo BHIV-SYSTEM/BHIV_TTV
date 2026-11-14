@@ -654,9 +654,14 @@
                             <h1 class="page-title">Model Training & Fine-Tuning</h1>
                             <p class="page-subtitle">Configure dataset manifests, adjust LoRA hyperparameters, inspect checkpoints, and launch training jobs.</p>
                         </div>
-                        <div class="training-status-badge">
-                            <span class="status-indicator-dot online"></span>
-                            <span>Trainer Ready</span>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <div class="stat-pill" style="padding:6px 12px; font-size:12px; background:var(--bg-input); border:1px solid var(--border-card);">
+                                <span id="hardware-vram-text">⚡ VRAM: Checking...</span>
+                            </div>
+                            <div class="training-status-badge">
+                                <span class="status-indicator-dot online"></span>
+                                <span id="training-worker-top-status">Trainer Ready</span>
+                            </div>
                         </div>
                     </div>
 
@@ -676,6 +681,12 @@
                                     <p class="dropzone-prompt"><strong>Click to select</strong> or drag and drop dataset manifest</p>
                                     <span class="dropzone-hint">Supports JSON manifest, CSV, or video directory archive</span>
                                     <input type="file" id="dataset-file-input" class="hidden" accept=".json,.jsonl,.csv,.zip">
+                                </div>
+
+                                <div class="dataset-actions-row" style="display:flex; gap:8px; margin-top:10px; margin-bottom:10px;">
+                                    <button type="button" class="ref-action-btn" id="prepare-sample-dataset-btn" style="flex:1; text-align:center; font-weight:500;">
+                                        ⚡ Load Sample Dataset (OpenVid-1M, 100 clips)
+                                    </button>
                                 </div>
 
                                 <!-- Real Dataset Statistics -->
@@ -745,22 +756,41 @@
                             <div class="studio-card">
                                 <h3 class="card-section-title">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                                    Hyperparameters & Method
+                                    Hyperparameters & 10 GB VRAM Method
                                 </h3>
 
                                 <div class="form-grid-2">
                                     <div class="control-group">
                                         <label for="train-base-model" class="field-label">Base Model</label>
                                         <select id="train-base-model" class="custom-select">
-                                            <option value="SpatialTemporalTTVModel">SpatialTemporalTTVModel (Base)</option>
+                                            <option value="SpatialTemporalTTVModel" selected>SpatialTemporalTTVModel (Base - 10GB Optimized)</option>
+                                            <option value="THUDM/CogVideoX-2b">THUDM/CogVideoX-2b (Diffusers Transformer)</option>
                                         </select>
                                     </div>
                                     <div class="control-group">
                                         <label for="train-method" class="field-label">Fine-Tuning Method</label>
                                         <select id="train-method" class="custom-select">
-                                            <option value="lora" selected>LoRA (Rank 8, Alpha 16)</option>
-                                            <option value="full">Full Fine-Tuning</option>
+                                            <option value="lora" selected>LoRA (Parameter-Efficient)</option>
                                             <option value="temporal_only">Temporal Cross-Attention Only</option>
+                                            <option value="full">Full Fine-Tuning</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-grid-3">
+                                    <div class="control-group">
+                                        <label for="train-lora-rank" class="field-label">LoRA Rank (r)</label>
+                                        <input type="number" id="train-lora-rank" value="4" min="1" max="64">
+                                    </div>
+                                    <div class="control-group">
+                                        <label for="train-lora-alpha" class="field-label">LoRA Alpha</label>
+                                        <input type="number" id="train-lora-alpha" value="16" min="1" max="128">
+                                    </div>
+                                    <div class="control-group">
+                                        <label for="train-precision" class="field-label">Precision</label>
+                                        <select id="train-precision" class="custom-select">
+                                            <option value="bfloat16" selected>bfloat16 (Ampere Native)</option>
+                                            <option value="float16">float16 (GradScaler)</option>
                                         </select>
                                     </div>
                                 </div>
@@ -768,20 +798,33 @@
                                 <div class="form-grid-3">
                                     <div class="control-group">
                                         <label for="train-epochs" class="field-label">Epochs</label>
-                                        <input type="number" id="train-epochs" value="10" min="1" max="100">
+                                        <input type="number" id="train-epochs" value="1" min="1" max="100">
                                     </div>
                                     <div class="control-group">
                                         <label for="train-lr" class="field-label">Learning Rate</label>
                                         <input type="text" id="train-lr" value="0.0001">
                                     </div>
                                     <div class="control-group">
-                                        <label for="train-batch-size" class="field-label">Batch Size</label>
+                                        <label for="train-batch-size" class="field-label">Micro-Batch Size</label>
                                         <select id="train-batch-size" class="custom-select">
-                                            <option value="1">1</option>
-                                            <option value="2" selected>2</option>
-                                            <option value="4">4</option>
+                                            <option value="1" selected>1 (Safe 10 GB Budget)</option>
+                                            <option value="2">2 (Higher VRAM)</option>
                                         </select>
                                     </div>
+                                </div>
+
+                                <!-- Preflight & Memory Feasibility Check -->
+                                <div style="display:flex; gap:8px; margin-top:12px; margin-bottom:10px;">
+                                    <button type="button" class="ref-action-btn" id="run-preflight-btn" style="flex:1; font-weight:600; text-align:center;">
+                                        🔍 Run Preflight & VRAM Feasibility Check
+                                    </button>
+                                </div>
+                                <div id="preflight-result-box" class="hidden" style="padding:10px 12px; border-radius:6px; margin-bottom:12px; font-size:12px; line-height:1.4; background:var(--bg-input); border:1px solid var(--border-card);">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                        <strong>Hardware & Memory Feasibility:</strong>
+                                        <span id="preflight-badge" class="badge">Checking...</span>
+                                    </div>
+                                    <p id="preflight-summary-text" style="margin:0; color:var(--text-secondary);"></p>
                                 </div>
 
                                 <!-- Start Training CTA -->

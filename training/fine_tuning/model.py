@@ -209,6 +209,14 @@ class SpatialTemporalTTVModel(nn.Module):
 
         # 6. Alignment projection head for semantic similarity
         self.video_semantic_proj = nn.Linear(latent_channels, text_embed_dim)
+        self.gradient_checkpointing = False
+
+    def enable_gradient_checkpointing(self):
+        """Enables gradient checkpointing to reduce VRAM consumption during training."""
+        self.gradient_checkpointing = True
+
+    def disable_gradient_checkpointing(self):
+        self.gradient_checkpointing = False
 
     def forward(
         self,
@@ -239,8 +247,13 @@ class SpatialTemporalTTVModel(nn.Module):
         z_seq[:, :t_avail] = z_seq[:, :t_avail] + self.temporal_pos_embed[:, :t_avail, :, :, :]
 
         # 4. Synthesize motion conditioned on multi-token sequence
-        z_seq = self.temp_block1(z_seq, token_seq)
-        z_seq = self.temp_block2(z_seq, token_seq)
+        if self.gradient_checkpointing and self.training and z_seq.requires_grad:
+            import torch.utils.checkpoint as cp
+            z_seq = cp.checkpoint(self.temp_block1, z_seq, token_seq, use_reentrant=False)
+            z_seq = cp.checkpoint(self.temp_block2, z_seq, token_seq, use_reentrant=False)
+        else:
+            z_seq = self.temp_block1(z_seq, token_seq)
+            z_seq = self.temp_block2(z_seq, token_seq)
 
         # 5. Extract global video representation for semantic alignment
         video_emb = self.video_semantic_proj(z_seq.mean(dim=(1, 3, 4)))

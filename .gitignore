@@ -43,6 +43,16 @@ htmlcov/
 .ruff_cache/
 .DS_Store
 Thumbs.db
+scratch/
+
+# Model Checkpoints & Artifacts
+*.pt
+*.bin
+*.safetensors
+training/checkpoints/*.pt
+*.mp4
+data/datasets/
+dataset/ttv_data/training_data/
 
 # Generated Media
 generated/images/*

@@ -1,11 +1,56 @@
 import os
+import sys
+import shutil
 import subprocess
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 from app.models.scene import Scene
 from app.core.config import settings
 from app.core.exceptions import FFmpegProcessingError
 from app.core.logging import telemetry
 from app.utils.media_check import validate_video_file
+
+def get_ffmpeg_binary() -> Optional[str]:
+    """
+    Locates a working FFmpeg binary executable using prioritized discovery:
+    1. settings.FFMPEG_PATH or FFMPEG_PATH environment variable
+    2. System PATH (via shutil.which)
+    3. Active Python environment Scripts directory (sys.prefix/Scripts/ffmpeg.exe)
+    4. Project workspace .venv/Scripts/ffmpeg.exe
+    5. imageio_ffmpeg bundled binary (if installed)
+    Automatically updates os.environ['PATH'] with the binary directory for subprocesses.
+    """
+    configured = getattr(settings, "FFMPEG_PATH", None) or os.environ.get("FFMPEG_PATH")
+    candidates: List[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+
+    system_which = shutil.which("ffmpeg")
+    if system_which:
+        candidates.append(Path(system_which))
+
+    exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    candidates.append(Path(sys.prefix) / "Scripts" / exe_name)
+    candidates.append(Path(settings.WORKSPACE_ROOT) / ".venv" / "Scripts" / exe_name)
+
+    try:
+        import imageio_ffmpeg
+        img_bin = imageio_ffmpeg.get_ffmpeg_exe()
+        if img_bin:
+            candidates.append(Path(img_bin))
+    except Exception:
+        pass
+
+    for cand in candidates:
+        if cand and cand.is_file():
+            bin_path = str(cand.resolve())
+            bin_dir = str(cand.resolve().parent)
+            path_parts = os.environ.get("PATH", "").split(os.pathsep)
+            if bin_dir.lower() not in [p.lower() for p in path_parts if p]:
+                os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+            return bin_path
+
+    return None
 
 class FFmpegService:
     """
@@ -46,29 +91,11 @@ class FFmpegService:
             f"fps={fps},setsar=1"
         )
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", concat_file,
-            "-i", master_audio_path,
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-preset", "fast",
-            "-crf", "22",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-shortest",
-            "-movflags", "+faststart",
-            output_path
-        ]
+        ffmpeg_bin = get_ffmpeg_binary()
 
-        import shutil
-        import cv2
-
-        if not shutil.which("ffmpeg"):
+        if not ffmpeg_bin:
             # Fallback to OpenCV compositor when FFmpeg is not installed in the local environment
+            import cv2
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(output_path, fourcc, float(fps), (width, height))
             for scene in scenes:
@@ -87,6 +114,24 @@ class FFmpegService:
             is_valid, info = validate_video_file(output_path)
             telemetry.emit("ffmpeg_assembly_completed", execution_id, info)
             return output_path
+
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concat_file,
+            "-i", master_audio_path,
+            "-vf", vf,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", "fast",
+            "-crf", "22",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",
+            "-movflags", "+faststart",
+            output_path
+        ]
 
         try:
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)

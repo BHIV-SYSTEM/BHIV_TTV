@@ -1,5 +1,7 @@
 import os
+import gc
 import time
+import json
 import random
 import numpy as np
 import torch
@@ -10,7 +12,7 @@ from typing import Dict, Any, Optional, List, Tuple
 from torch.utils.data import DataLoader
 
 from training.fine_tuning.model import SpatialTemporalTTVModel
-from training.fine_tuning.lora import apply_lora_to_model, get_lora_state_dict, load_lora_state_dict
+from training.fine_tuning.lora import apply_lora_to_model, get_lora_state_dict, load_lora_state_dict, get_trainable_parameters
 from training.utils.versioning import ModelRegistry
 
 
@@ -72,17 +74,19 @@ class TTVLoss(nn.Module):
 
 class TTVTrainer:
     """
-    Real Fine-Tuning Trainer for Text-to-Video models.
-    Supports:
-    - Full fine-tuning or LoRA parameter-efficient fine-tuning
-    - Gradient accumulation
-    - Checkpoint saving & resuming
-    - Validation loop
-    - Model registry integration
+    Memory-Optimized Fine-Tuning Trainer for 10 GB VRAM Video Models.
+    Features:
+    - Low-Rank Adaptation (LoRA) on attention and convolution layers
+    - Gradient checkpointing
+    - Mixed precision (native bfloat16 or float16 with GradScaler)
+    - Micro-batching with gradient accumulation
+    - Peak VRAM telemetry and CUDA cache clearing
+    - Graceful Out-Of-Memory (OOM) handling
+    - Periodic and final checkpoint saving with resume capability
     """
     def __init__(
         self,
-        model: SpatialTemporalTTVModel,
+        model: nn.Module,
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         config: Optional[Dict[str, Any]] = None,
@@ -103,11 +107,30 @@ class TTVTrainer:
         self.learning_rate = float(self.config.get("learning_rate", 1e-4))
         self.weight_decay = float(self.config.get("weight_decay", 1e-2))
         self.epochs = int(self.config.get("epochs", 5))
-        self.grad_accum_steps = int(self.config.get("gradient_accumulation_steps", 1))
+        self.grad_accum_steps = max(1, int(self.config.get("gradient_accumulation_steps", 4)))
         self.max_grad_norm = float(self.config.get("max_grad_norm", 1.0))
         self.use_lora = bool(self.config.get("use_lora", True))
         self.lora_rank = int(self.config.get("lora_rank", 4))
         self.lora_alpha = float(self.config.get("lora_alpha", 8.0))
+        self.lora_dropout = float(self.config.get("lora_dropout", 0.0))
+        self.target_modules = self.config.get("target_modules", ["to_q", "to_k", "to_v", "proj", "temporal_conv", "temporal_proj"])
+
+        # Gradient Checkpointing
+        self.use_grad_checkpointing = bool(self.config.get("gradient_checkpointing", True))
+        if self.use_grad_checkpointing and hasattr(self.model, "enable_gradient_checkpointing"):
+            self.model.enable_gradient_checkpointing()
+
+        # Mixed Precision Setup
+        self.precision = str(self.config.get("precision", "bfloat16")).lower()
+        self.scaler = None
+        self.autocast_dtype = None
+
+        if self.device.type == "cuda":
+            if self.precision in ("bfloat16", "bf16") and torch.cuda.is_bf16_supported():
+                self.autocast_dtype = torch.bfloat16
+            elif self.precision in ("float16", "fp16"):
+                self.autocast_dtype = torch.float16
+                self.scaler = torch.amp.GradScaler('cuda')
 
         # Checkpoint directory
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -116,14 +139,19 @@ class TTVTrainer:
 
         # Apply LoRA if requested
         if self.use_lora:
-            apply_lora_to_model(self.model, rank=self.lora_rank, alpha=self.lora_alpha)
+            apply_lora_to_model(
+                self.model,
+                rank=self.lora_rank,
+                alpha=self.lora_alpha,
+                dropout=self.lora_dropout,
+                target_names=self.target_modules
+            )
             self.model = self.model.to(self.device)
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         else:
             trainable_params = list(self.model.parameters())
 
-        self.trainable_params_count = sum(p.numel() for p in trainable_params)
-        self.total_params_count = sum(p.numel() for p in self.model.parameters())
+        self.trainable_params_count, self.total_params_count, self.trainable_ratio = get_trainable_parameters(self.model)
 
         # Optimizer & Scheduler
         self.optimizer = torch.optim.AdamW(
@@ -145,37 +173,84 @@ class TTVTrainer:
         self.best_val_loss = float("inf")
         self.history: List[Dict[str, Any]] = []
 
+    def _get_vram_telemetry(self) -> Dict[str, float]:
+        """Captures real-time CUDA memory utilization."""
+        if self.device.type != "cuda":
+            return {"vram_allocated_mb": 0.0, "vram_reserved_mb": 0.0, "vram_peak_mb": 0.0}
+        return {
+            "vram_allocated_mb": round(torch.cuda.memory_allocated(self.device) / (1024**2), 2),
+            "vram_reserved_mb": round(torch.cuda.memory_reserved(self.device) / (1024**2), 2),
+            "vram_peak_mb": round(torch.cuda.max_memory_allocated(self.device) / (1024**2), 2),
+        }
+
     def train_epoch(self, epoch: int) -> Dict[str, float]:
         self.model.train()
         epoch_losses = []
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
+
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
 
         for batch_idx, batch in enumerate(self.train_loader):
-            frames = batch["frames"].to(self.device)  # (B, T, C, H, W)
-            tokens = batch["prompt_tokens"].to(self.device)  # (B, L)
+            try:
+                frames = batch["frames"].to(self.device, non_blocking=True)  # (B, T, C, H, W)
+                tokens = batch["prompt_tokens"].to(self.device, non_blocking=True)  # (B, L)
+                keyframe = frames[:, 0, :, :, :]
 
-            # Keyframe is the initial frame (index 0)
-            keyframe = frames[:, 0, :, :, :]
+                # Forward pass under autocast when enabled
+                if self.autocast_dtype is not None:
+                    with torch.amp.autocast('cuda', dtype=self.autocast_dtype):
+                        pred_frames, video_emb, text_emb = self.model(keyframe, tokens)
+                        loss, metrics = self.criterion(pred_frames, frames, video_emb, text_emb)
+                        scaled_loss = loss / self.grad_accum_steps
+                else:
+                    pred_frames, video_emb, text_emb = self.model(keyframe, tokens)
+                    loss, metrics = self.criterion(pred_frames, frames, video_emb, text_emb)
+                    scaled_loss = loss / self.grad_accum_steps
 
-            # Forward pass
-            pred_frames, video_emb, text_emb = self.model(keyframe, tokens)
+                # Backward pass
+                if self.scaler is not None:
+                    self.scaler.scale(scaled_loss).backward()
+                else:
+                    scaled_loss.backward()
 
-            # Compute loss
-            loss, metrics = self.criterion(pred_frames, frames, video_emb, text_emb)
-            scaled_loss = loss / self.grad_accum_steps
-            scaled_loss.backward()
+                # Step optimizer on gradient accumulation boundary
+                if (batch_idx + 1) % self.grad_accum_steps == 0 or (batch_idx + 1) == len(self.train_loader):
+                    if self.scaler is not None:
+                        if self.max_grad_norm > 0:
+                            self.scaler.unscale_(self.optimizer)
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    else:
+                        if self.max_grad_norm > 0:
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                        self.optimizer.step()
 
-            if (batch_idx + 1) % self.grad_accum_steps == 0 or (batch_idx + 1) == len(self.train_loader):
-                if self.max_grad_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-                self.global_step += 1
+                    self.optimizer.zero_grad(set_to_none=True)
+                    self.global_step += 1
 
-            epoch_losses.append(metrics["loss_total"])
+                epoch_losses.append(metrics["loss_total"])
+
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+                if "out of memory" in str(exc).lower():
+                    if self.device.type == "cuda":
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                    telemetry = self._get_vram_telemetry()
+                    raise RuntimeError(
+                        f"CUDA Out-of-Memory during training epoch {epoch+1}, step {batch_idx+1}. "
+                        f"Allocated: {telemetry['vram_allocated_mb']}MB, Peak: {telemetry['vram_peak_mb']}MB. "
+                        f"Recommendation: Enable gradient_checkpointing=True, reduce batch_size to 1, or lower resolution."
+                    ) from exc
+                raise
 
         self.scheduler.step()
         avg_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
+
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
         return {"train_loss": avg_loss}
 
     @torch.no_grad()
@@ -186,12 +261,18 @@ class TTVTrainer:
         self.model.eval()
         val_losses = []
         for batch in self.val_loader:
-            frames = batch["frames"].to(self.device)
-            tokens = batch["prompt_tokens"].to(self.device)
+            frames = batch["frames"].to(self.device, non_blocking=True)
+            tokens = batch["prompt_tokens"].to(self.device, non_blocking=True)
             keyframe = frames[:, 0, :, :, :]
 
-            pred_frames, video_emb, text_emb = self.model(keyframe, tokens)
-            loss, metrics = self.criterion(pred_frames, frames, video_emb, text_emb)
+            if self.autocast_dtype is not None:
+                with torch.amp.autocast('cuda', dtype=self.autocast_dtype):
+                    pred_frames, video_emb, text_emb = self.model(keyframe, tokens)
+                    loss, metrics = self.criterion(pred_frames, frames, video_emb, text_emb)
+            else:
+                pred_frames, video_emb, text_emb = self.model(keyframe, tokens)
+                loss, metrics = self.criterion(pred_frames, frames, video_emb, text_emb)
+
             val_losses.append(metrics["loss_total"])
 
         avg_val = float(np.mean(val_losses)) if val_losses else 0.0
@@ -199,25 +280,35 @@ class TTVTrainer:
 
     def train(self) -> Dict[str, Any]:
         """Runs complete training loop over specified epochs."""
-        print(f"[Training] Starting training on device: {self.device}")
-        print(f"[Training] Trainable parameters: {self.trainable_params_count:,} / {self.total_params_count:,} ({100 * self.trainable_params_count / self.total_params_count:.2f}%)")
+        telemetry = self._get_vram_telemetry()
+        print(f"[Training] Starting training on device: {self.device} (Precision: {self.precision})")
+        print(f"[Training] Trainable parameters: {self.trainable_params_count:,} / {self.total_params_count:,} ({self.trainable_ratio:.2f}%)")
+        print(f"[Training] Gradient Checkpointing: {self.use_grad_checkpointing} | Accumulation Steps: {self.grad_accum_steps}")
+        if self.device.type == "cuda":
+            print(f"[Training] Initial VRAM: {telemetry['vram_allocated_mb']}MB allocated | {telemetry['vram_reserved_mb']}MB reserved")
 
         start_time = time.time()
         for epoch in range(self.current_epoch, self.epochs):
             self.current_epoch = epoch
             train_metrics = self.train_epoch(epoch)
             val_metrics = self.evaluate()
+            vram_stats = self._get_vram_telemetry()
 
             combined = {
                 "epoch": epoch + 1,
                 "global_step": self.global_step,
                 **train_metrics,
                 **val_metrics,
-                "lr": self.optimizer.param_groups[0]["lr"]
+                "lr": self.optimizer.param_groups[0]["lr"],
+                **vram_stats,
             }
             self.history.append(combined)
 
-            print(f"  Epoch [{epoch+1}/{self.epochs}] Step {self.global_step} - Train Loss: {train_metrics['train_loss']:.4f} - Val Loss: {val_metrics['val_loss']:.4f}")
+            print(
+                f"  Epoch [{epoch+1}/{self.epochs}] Step {self.global_step} - "
+                f"Train Loss: {train_metrics['train_loss']:.4f} - Val Loss: {val_metrics['val_loss']:.4f} - "
+                f"Peak VRAM: {vram_stats['vram_peak_mb']}MB"
+            )
 
             # Save checkpoint if best or at end
             if val_metrics["val_loss"] < self.best_val_loss or (epoch + 1) == self.epochs:
@@ -230,25 +321,42 @@ class TTVTrainer:
             "elapsed_seconds": round(elapsed, 2),
             "final_checkpoint": final_ckpt,
             "best_val_loss": self.best_val_loss,
-            "history": self.history
+            "history": self.history,
+            "telemetry": self._get_vram_telemetry(),
         }
 
     def save_checkpoint(self, filename: str, metrics: Optional[Dict[str, Any]] = None) -> str:
-        """Saves weights, optimizer state, and training metadata."""
+        """Saves weights, optimizer state, LoRA adapter weights, and training metadata."""
         ckpt_path = self.checkpoint_dir / filename
         state = {
             "epoch": self.current_epoch,
             "global_step": self.global_step,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict(),
             "use_lora": self.use_lora,
+            "lora_rank": self.lora_rank,
+            "lora_alpha": self.lora_alpha,
+            "precision": self.precision,
             "config": self.config,
-            "metrics": metrics or {}
+            "metrics": metrics or {},
+            "telemetry": self._get_vram_telemetry(),
         }
         if self.use_lora:
             state["lora_state_dict"] = get_lora_state_dict(self.model)
 
         torch.save(state, str(ckpt_path))
+
+        # Also save standalone LoRA weights for portable inference
+        if self.use_lora and filename == "final_model.pt":
+            lora_only_path = self.checkpoint_dir / "final_lora_adapter.pt"
+            torch.save({
+                "lora_state_dict": get_lora_state_dict(self.model),
+                "rank": self.lora_rank,
+                "alpha": self.lora_alpha,
+                "target_modules": self.target_modules,
+            }, str(lora_only_path))
+
         return str(ckpt_path.resolve())
 
     def resume_from_checkpoint(self, checkpoint_path: str) -> None:
@@ -260,6 +368,8 @@ class TTVTrainer:
         self.model.load_state_dict(checkpoint["model_state_dict"])
         if "optimizer_state_dict" in checkpoint:
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "scheduler_state_dict" in checkpoint:
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         self.current_epoch = checkpoint.get("epoch", 0) + 1
         self.global_step = checkpoint.get("global_step", 0)
-        print(f"[Training] Successfully resumed from {checkpoint_path} (epoch {self.current_epoch})")
+        print(f"[Training] Successfully resumed from {checkpoint_path} (resuming at epoch {self.current_epoch + 1})")
