@@ -30,6 +30,7 @@ def check_cuda_availability() -> Tuple[bool, str, Dict[str, Any]]:
     Supports environment flag TTV_FORCE_CUDA_AVAILABLE for simulated test environments.
     """
     force_cuda = os.environ.get("TTV_FORCE_CUDA_AVAILABLE", "").strip().lower() in ("1", "true", "yes")
+    force_no_cuda = os.environ.get("TTV_FORCE_CUDA_UNAVAILABLE", "").strip().lower() in ("1", "true", "yes")
 
     hardware_info: Dict[str, Any] = {
         "torch_available": TORCH_AVAILABLE,
@@ -40,6 +41,11 @@ def check_cuda_availability() -> Tuple[bool, str, Dict[str, Any]]:
         "vram_total_gb": 0.0,
         "device_type": "cpu",
     }
+
+    if force_no_cuda:
+        hardware_info["cuda_available"] = False
+        hardware_info["device_type"] = "cpu"
+        return False, "CUDA is unavailable (Environment Forced)", hardware_info
 
     if force_cuda:
         hardware_info["cuda_available"] = True

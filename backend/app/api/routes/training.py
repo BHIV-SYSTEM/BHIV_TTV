@@ -1,17 +1,29 @@
-<<<<<<< HEAD
-"""Training and Fine-Tuning API routes with full Reference workflow support."""
+"""Training and Fine-Tuning API routes with full Reference workflow and Job Manager support."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Query
+from fastapi.responses import JSONResponse
 
 from app.schemas.request import TrainingSessionRequest
 from app.schemas.response import TrainingSessionResponse
+from app.schemas.training import (
+    TrainingJobConfig,
+    TrainingJobResponse,
+    TrainingLogsResponse,
+    ManifestValidationResponse,
+)
 from app.services.reference_service import reference_service
+from app.services.training_service import (
+    training_job_manager,
+    parse_manifest_records,
+    validate_manifest_records,
+)
 from app.core.config import settings
 from app.core.logging import telemetry, logger
 from app.core.exceptions import ValidationError
@@ -23,7 +35,7 @@ from training.datasets.loader import create_dataloader
 
 router = APIRouter()
 
-# In-memory training sessions registry
+# In-memory training sessions registry (used by /start and /status)
 _TRAINING_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
@@ -120,6 +132,10 @@ async def _execute_training_job(
         session["error"] = str(exc)
         session["logs"].append(f"[Error] Training failed: {exc}")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Reference-Augmented Training Session Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/start", response_model=TrainingSessionResponse)
 async def start_training_session(request: TrainingSessionRequest):
@@ -226,31 +242,11 @@ async def get_training_status(job_id: str):
         config=session.get("config"),
         logs=session.get("logs", [])
     )
-=======
-from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Query
-from fastapi.responses import JSONResponse
-
-from app.core.config import settings
-from app.schemas.training import (
-    TrainingJobConfig,
-    TrainingJobResponse,
-    TrainingLogsResponse,
-    ManifestValidationResponse,
-)
-from app.services.training_service import (
-    training_job_manager,
-    parse_manifest_records,
-    validate_manifest_records,
-)
-
-router = APIRouter()
-
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Managed Training Jobs & Manifest Validation Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/jobs", response_model=TrainingJobResponse)
 async def launch_or_queue_training_job(
@@ -403,4 +399,3 @@ async def validate_manifest_endpoint(
     result = validate_manifest_records(records)
     result["manifest_path"] = resolved_path or manifest_filename
     return ManifestValidationResponse(**result)
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)

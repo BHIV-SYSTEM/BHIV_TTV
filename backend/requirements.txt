@@ -8,12 +8,14 @@ python-dotenv>=1.0.0
 
 # HTTP & Networking
 requests>=2.31.0
-httpx>=0.25.0
+httpx>=0.25.0,<0.28.0
 
 # Computer Vision & Media Processing
 numpy>=1.24.0
 Pillow>=10.0.0
 opencv-python>=4.8.0
+imageio>=2.37.0
+imageio-ffmpeg>=0.5.0
 
 # Speech Synthesis (TTS)
 edge-tts>=6.1.0
@@ -25,6 +27,9 @@ yt-dlp>=2024.8.0
 # AI Provider SDKs (Optional / Pluggable)
 openai>=1.10.0
 google-generativeai>=0.4.0
+
+# System & Monitoring
+psutil>=5.9.0
 
 # Testing & Quality
 pytest>=7.4.0
@@ -39,4 +44,5 @@ diffusers>=0.33.0
 transformers>=4.51.0
 accelerate>=1.6.0
 safetensors>=0.5.3
-imageio>=2.37.0
+sentencepiece==0.2.0
+protobuf>=5.26.1,<6.0.0dev

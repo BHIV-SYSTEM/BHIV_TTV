@@ -10,6 +10,9 @@ def get_video_adapter(provider: str = "opencv"):
     if mode == "wan_lora":
         from app.adapters.video.wan_video_adapter import WanVideoAdapter
         return WanVideoAdapter(require_lora=True)
+    if mode == "cogvideox_lora":
+        from app.adapters.video.cogvideox_video_adapter import CogVideoXVideoAdapter
+        return CogVideoXVideoAdapter(require_lora=True)
     if mode == "finetuned":
         from app.adapters.video.neural_video_adapter import NeuralVideoAdapter
         return NeuralVideoAdapter()
@@ -20,5 +23,9 @@ def get_video_adapter(provider: str = "opencv"):
         # Imported lazily: diffusers/torch are NOT required unless VIDEO_PROVIDER=wan
         from app.adapters.video.wan_video_adapter import WanVideoAdapter
         return WanVideoAdapter()
+    if p in ("cogvideox", "cogvideo", "cogvideox-2b"):
+        # Imported lazily: diffusers/torch are NOT required unless VIDEO_PROVIDER=cogvideox
+        from app.adapters.video.cogvideox_video_adapter import CogVideoXVideoAdapter
+        return CogVideoXVideoAdapter()
     return OpenCVVideoAdapter()
 

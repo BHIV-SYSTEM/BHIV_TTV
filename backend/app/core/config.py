@@ -10,6 +10,8 @@ CURRENT_FILE = Path(__file__).resolve()
 WORKSPACE_ROOT = CURRENT_FILE.parents[3]
 
 class Settings(BaseSettings):
+    WORKSPACE_ROOT: Path = WORKSPACE_ROOT
+
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
@@ -46,6 +48,24 @@ class Settings(BaseSettings):
     WAN_LORA_SCALE: float = 1.0
     # Optional HuggingFace token for gated/private model access
     HF_TOKEN: Optional[str] = None
+
+    # ── CogVideoX-2B Video Generation ────────────────────────────────────
+    # High-fidelity Diffusers text-to-video foundation model.
+    # Requires NVIDIA GPU with CUDA. Set VIDEO_PROVIDER=cogvideox to enable.
+    COGVIDEOX_MODEL_ID: str = "THUDM/CogVideoX-2b"
+    COGVIDEOX_DEVICE: str = "cuda"
+    COGVIDEOX_DTYPE: str = "bfloat16"
+    COGVIDEOX_CPU_OFFLOAD: bool = True
+    COGVIDEOX_SEQUENTIAL_CPU_OFFLOAD: bool = False
+    COGVIDEOX_ENABLE_TILING: bool = True
+    COGVIDEOX_ENABLE_SLICING: bool = True
+    COGVIDEOX_NUM_FRAMES: int = 49
+    COGVIDEOX_NUM_INFERENCE_STEPS: int = 30
+    COGVIDEOX_GUIDANCE_SCALE: float = 6.0
+    COGVIDEOX_DEFAULT_WIDTH: int = 720
+    COGVIDEOX_DEFAULT_HEIGHT: int = 480
+    COGVIDEOX_LORA_PATH: Optional[str] = None
+    COGVIDEOX_LORA_SCALE: float = 1.0
 
     # Semantic adherence needs an explicitly configured VLM evaluator. The
     # deterministic constraints layer is always available, but does not claim a score.
@@ -92,6 +112,11 @@ class Settings(BaseSettings):
     # Reference retrieval
     REFERENCE_MAX_BYTES: int = 104857600
     REFERENCE_DOWNLOAD_TIMEOUT: int = 30
+
+    # Hardware & FFmpeg Configuration
+    FFMPEG_PATH: Optional[str] = None
+    CUDA_VISIBLE_DEVICES: Optional[str] = None
+    DEFAULT_GPU_INDEX: int = 0
 
     # Lip-sync
     LIPSYNC_ENABLED: bool = True

@@ -1321,174 +1321,160 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (startTrainingBtn) {
         startTrainingBtn.addEventListener("click", async () => {
-<<<<<<< HEAD
             const epochs = parseInt(document.getElementById("train-epochs")?.value || "10", 10);
             const lr = document.getElementById("train-lr")?.value || "0.0001";
             const batchSize = parseInt(document.getElementById("train-batch-size")?.value || "2", 10);
-=======
-            const epochs = document.getElementById("train-epochs")?.value || "10";
-            const lr = document.getElementById("train-lr")?.value || "0.0001";
-            const batchSize = document.getElementById("train-batch-size")?.value || "2";
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
             const method = document.getElementById("train-method")?.value || "lora";
             const baseModel = document.getElementById("train-base-model")?.value || "SpatialTemporalTTVModel";
 
             startTrainingBtn.disabled = true;
-<<<<<<< HEAD
-            trainingSessionStatus.textContent = "Session Active";
-            trainingSessionStatus.className = "badge badge-success";
-
-            function appendLog(text, cssClass = "text-muted") {
-                if (!trainingTerminalLog) return;
-                const logLine = document.createElement("div");
-                logLine.className = `log-line ${cssClass}`;
-                logLine.textContent = text;
-                trainingTerminalLog.appendChild(logLine);
-                trainingTerminalLog.scrollTop = trainingTerminalLog.scrollHeight;
-            }
-
-            appendLog(`[Launch] Initializing Fine-Tuning: method=${method}, epochs=${epochs}, lr=${lr}, batch=${batchSize}`, "text-accent");
-            if (trainReferenceState.referenceId || trainReferenceState.referenceUrl) {
-                appendLog(`[Reference] Attached reference: id=${trainReferenceState.referenceId || "none"}, url=${trainReferenceState.referenceUrl || "none"}, type=${trainReferenceState.referenceType || "auto"}`, "text-accent");
-                appendLog(`[Dataset] Ingesting reference into model training pipeline...`, "text-muted");
-            }
-
-            try {
-                const payload = {
-                    base_model: baseModel,
-                    method: method,
-                    epochs: epochs,
-                    learning_rate: lr,
-                    batch_size: batchSize,
-                    reference_id: trainReferenceState.referenceId,
-                    reference_url: trainReferenceState.referenceUrl,
-                    reference_type: trainReferenceState.referenceType
-                };
-
-                const res = await fetch("/api/v1/training/start", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.message || errData.detail || "Failed to start training session");
-                }
-
-                const data = await res.json();
-                if (Array.isArray(data.logs)) {
-                    data.logs.forEach(l => appendLog(l, "text-muted"));
-                }
-
-                showToast("Training session launched with reference!", "success", 4000);
-
-                // Poll for training job updates
-                const pollTimer = setInterval(async () => {
-                    try {
-                        const statusRes = await fetch(`/api/v1/training/status/${data.job_id}`);
-                        if (!statusRes.ok) return;
-                        const statusData = await statusRes.json();
-                        if (statusData.status === "completed") {
-                            clearInterval(pollTimer);
-                            startTrainingBtn.disabled = false;
-                            trainingSessionStatus.textContent = "Completed";
-                            trainingSessionStatus.className = "badge badge-success";
-                            if (Array.isArray(statusData.logs)) {
-                                statusData.logs.slice(data.logs.length).forEach(l => appendLog(l, "text-accent"));
-                            }
-                            showToast("Training session completed successfully!", "success", 5000);
-                        } else if (statusData.status === "failed") {
-                            clearInterval(pollTimer);
-                            startTrainingBtn.disabled = false;
-                            trainingSessionStatus.textContent = "Failed";
-                            trainingSessionStatus.className = "badge badge-danger";
-                            appendLog(`[Error] Training job failed.`, "text-accent");
-                            showToast("Training job encountered an error.", "error", 5000);
-                        }
-                    } catch (e) {
-                        // ignore network blips during polling
-                    }
-                }, 1500);
-
-            } catch (err) {
-                appendLog(`[Error] ${err.message}`, "text-accent");
-                trainingSessionStatus.textContent = "Failed";
-                trainingSessionStatus.className = "badge badge-danger";
-                startTrainingBtn.disabled = false;
-                showToast(err.message, "error", 5000);
-=======
             if (startTrainingBtnText) startTrainingBtnText.textContent = "Submitting Job...";
 
             setTrainingBadge("queued", "job queued");
-
-            trainingTerminalLog.innerHTML = "";
+            if (trainingTerminalLog) trainingTerminalLog.innerHTML = "";
             appendTerminalLog(`[Launch] Preparing Fine-Tuning Job (Base: ${baseModel}, Method: ${method}, Epochs: ${epochs}, LR: ${lr}, Batch: ${batchSize})...`, "text-accent");
 
-            try {
-                const formData = new FormData();
-                formData.append("base_model", baseModel);
-                formData.append("method", method);
-                formData.append("epochs", epochs);
-                formData.append("learning_rate", lr);
-                formData.append("batch_size", batchSize);
+            // Check if training with an attached reference media sample
+            const hasReference = trainReferenceState && (trainReferenceState.referenceId || trainReferenceState.referenceUrl);
 
-                if (selectedManifestFile) {
-                    formData.append("manifest_file", selectedManifestFile);
-                } else {
-                    formData.append("manifest_path", "data/manifests/ttv_training_manifest_120.jsonl");
-                }
+            if (hasReference) {
+                appendTerminalLog(`[Reference] Attached reference: id=${trainReferenceState.referenceId || "none"}, url=${trainReferenceState.referenceUrl || "none"}, type=${trainReferenceState.referenceType || "auto"}`, "text-accent");
+                appendTerminalLog(`[Dataset] Ingesting reference into model training pipeline...`, "text-muted");
 
-                const response = await fetch("/api/v1/training/jobs", {
-                    method: "POST",
-                    body: formData
-                });
+                try {
+                    const payload = {
+                        base_model: baseModel,
+                        method: method,
+                        epochs: epochs,
+                        learning_rate: lr,
+                        batch_size: batchSize,
+                        reference_id: trainReferenceState.referenceId,
+                        reference_url: trainReferenceState.referenceUrl,
+                        reference_type: trainReferenceState.referenceType
+                    };
 
-                if (!response.ok) {
-                    const errData = await response.json().catch(() => ({}));
-                    throw new Error(errData.detail || errData.message || "Failed to create training job");
-                }
+                    const res = await fetch("/api/v1/training/start", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
 
-                const data = await response.json();
-                activeTrainingJobId = data.job_id;
+                    if (!res.ok) {
+                        const errData = await res.json().catch(() => ({}));
+                        throw new Error(errData.message || errData.detail || "Failed to start training session");
+                    }
 
-                if (data.cli_fallback_command) {
-                    if (cliFallbackCode) cliFallbackCode.textContent = data.cli_fallback_command;
-                    if (cliFallbackCard) cliFallbackCard.classList.remove("hidden");
-                }
+                    const data = await res.json();
+                    if (Array.isArray(data.logs)) {
+                        data.logs.forEach(l => appendTerminalLog(l, "text-muted"));
+                    }
 
-                // If backend determined CUDA is unavailable:
-                if (data.status === "CUDA_UNAVAILABLE") {
-                    setTrainingBadge("CUDA_UNAVAILABLE", "CUDA unavailable");
-                    appendTerminalLog(`[System] Job ID registered: ${data.job_id}`, "text-info");
-                    appendTerminalLog(`[Manifest] Records evaluated: ${data.manifest_stats?.total_records || 120} (${data.manifest_stats?.summary || "Valid"})`, "text-muted");
-                    appendTerminalLog("[CUDA Check] FAILED: NVIDIA CUDA acceleration is not available in this environment.", "text-warning");
-                    appendTerminalLog("[Status] CUDA_UNAVAILABLE: Browser and local CPU environment cannot train CUDA models.", "text-warning");
-                    appendTerminalLog("[Manual CLI Required] Run the reviewed CLI command in a CUDA training environment:", "text-accent");
-                    appendTerminalLog(`  ${data.cli_fallback_command}`, "text-accent");
+                    showToast("Training session launched with reference!", "success", 4000);
+                    setTrainingBadge(data.status || "running", "Session Active");
 
-                    showToast("CUDA unavailable on this system. Run the reviewed CLI command in a CUDA environment.", "warning", 6000);
+                    // Poll for reference training job updates
+                    const pollTimer = setInterval(async () => {
+                        try {
+                            const statusRes = await fetch(`/api/v1/training/status/${data.job_id}`);
+                            if (!statusRes.ok) return;
+                            const statusData = await statusRes.json();
+                            if (statusData.status === "completed") {
+                                clearInterval(pollTimer);
+                                startTrainingBtn.disabled = false;
+                                if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
+                                setTrainingBadge("completed", "Completed");
+                                if (Array.isArray(statusData.logs)) {
+                                    statusData.logs.slice(data.logs.length).forEach(l => appendTerminalLog(l, "text-accent"));
+                                }
+                                showToast("Training session completed successfully!", "success", 5000);
+                            } else if (statusData.status === "failed") {
+                                clearInterval(pollTimer);
+                                startTrainingBtn.disabled = false;
+                                if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
+                                setTrainingBadge("failed", "Failed");
+                                appendTerminalLog(`[Error] Training job failed.`, "text-danger");
+                                showToast("Training job encountered an error.", "error", 5000);
+                            }
+                        } catch (e) {
+                            // ignore network blips during polling
+                        }
+                    }, 1500);
+
+                } catch (err) {
+                    appendTerminalLog(`[Error] ${err.message}`, "text-danger");
+                    setTrainingBadge("failed", "Launch Failed");
                     startTrainingBtn.disabled = false;
                     if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
-                    return;
+                    showToast(err.message, "error", 5000);
                 }
 
-                // If CUDA is available: job is queued or running
-                if (data.status === "queued" || data.status === "running") {
-                    setTrainingBadge(data.status, data.status === "queued" ? "job queued" : "training running");
-                    appendTerminalLog(`[Job Started] Unique Job ID: ${data.job_id}`, "text-info");
-                    appendTerminalLog("[Worker] Worker subprocess launched. Polling execution logs...", "text-muted");
-                    showToast("Training job launched! Polling execution worker...", "success");
-                    pollTrainingJob(data.job_id);
-                }
+            } else {
+                // Standard dataset manifest training job
+                try {
+                    const formData = new FormData();
+                    formData.append("base_model", baseModel);
+                    formData.append("method", method);
+                    formData.append("epochs", epochs);
+                    formData.append("learning_rate", lr);
+                    formData.append("batch_size", batchSize);
 
-            } catch (err) {
-                setTrainingBadge("failed", "Launch Failed");
-                appendTerminalLog(`[Error] Failed to submit training job: ${err.message}`, "text-danger");
-                showToast(`Launch failed: ${err.message}`, "error");
-                startTrainingBtn.disabled = false;
-                if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
->>>>>>> 42b848c (Update TTV training dataset and JSON configuration)
+                    if (selectedManifestFile) {
+                        formData.append("manifest_file", selectedManifestFile);
+                    } else {
+                        formData.append("manifest_path", "data/manifests/ttv_training_manifest_120.jsonl");
+                    }
+
+                    const response = await fetch("/api/v1/training/jobs", {
+                        method: "POST",
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.detail || errData.message || "Failed to create training job");
+                    }
+
+                    const data = await response.json();
+                    activeTrainingJobId = data.job_id;
+
+                    if (data.cli_fallback_command) {
+                        if (cliFallbackCode) cliFallbackCode.textContent = data.cli_fallback_command;
+                        if (cliFallbackCard) cliFallbackCard.classList.remove("hidden");
+                    }
+
+                    // If backend determined CUDA is unavailable:
+                    if (data.status === "CUDA_UNAVAILABLE") {
+                        setTrainingBadge("CUDA_UNAVAILABLE", "CUDA unavailable");
+                        appendTerminalLog(`[System] Job ID registered: ${data.job_id}`, "text-info");
+                        appendTerminalLog(`[Manifest] Records evaluated: ${data.manifest_stats?.total_records || 120} (${data.manifest_stats?.summary || "Valid"})`, "text-muted");
+                        appendTerminalLog("[CUDA Check] FAILED: NVIDIA CUDA acceleration is not available in this environment.", "text-warning");
+                        appendTerminalLog("[Status] CUDA_UNAVAILABLE: Browser and local CPU environment cannot train CUDA models.", "text-warning");
+                        appendTerminalLog("[Manual CLI Required] Run the reviewed CLI command in a CUDA training environment:", "text-accent");
+                        appendTerminalLog(`  ${data.cli_fallback_command}`, "text-accent");
+
+                        showToast("CUDA unavailable on this system. Run the reviewed CLI command in a CUDA environment.", "warning", 6000);
+                        startTrainingBtn.disabled = false;
+                        if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
+                        return;
+                    }
+
+                    // If CUDA is available: job is queued or running
+                    if (data.status === "queued" || data.status === "running") {
+                        setTrainingBadge(data.status, data.status === "queued" ? "job queued" : "training running");
+                        appendTerminalLog(`[Job Started] Unique Job ID: ${data.job_id}`, "text-info");
+                        appendTerminalLog("[Worker] Worker subprocess launched. Polling execution logs...", "text-muted");
+                        showToast("Training job launched! Polling execution worker...", "success");
+                        pollTrainingJob(data.job_id);
+                    }
+
+                } catch (err) {
+                    setTrainingBadge("failed", "Launch Failed");
+                    appendTerminalLog(`[Error] Failed to submit training job: ${err.message}`, "text-danger");
+                    showToast(`Launch failed: ${err.message}`, "error");
+                    startTrainingBtn.disabled = false;
+                    if (startTrainingBtnText) startTrainingBtnText.textContent = "Launch Training";
+                }
+            }
             }
         });
     }
