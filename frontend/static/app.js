@@ -973,7 +973,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const voice = voiceToggle.checked;
         const fps = parseInt(fpsSelect.value, 10);
         const modelMode = modelSelect.value;
-        const token = (settingsTokenInput ? settingsTokenInput.value.trim() : null) || null;
+        const token = ((settingsTokenInput && settingsTokenInput.value.trim()) || localStorage.getItem(STORAGE_KEY_TOKEN) || "TTV_SECURE_GOVERNED_TOKEN_2026").trim();
         const language = languageSelect ? languageSelect.value : "en";
         const voiceId = voiceSelect ? voiceSelect.value : null;
         const referenceUrl = referenceUrlInput ? referenceUrlInput.value.trim() : "";
@@ -1021,9 +1021,14 @@ document.addEventListener("DOMContentLoaded", () => {
         previewFormatBadge.textContent = "Processing...";
 
         try {
+            const reqHeaders = { "Content-Type": "application/json" };
+            if (token) {
+                reqHeaders["Authorization"] = `Bearer ${token}`;
+                reqHeaders["X-Governance-Token"] = token;
+            }
             const res = await fetch("/api/v1/generate", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: reqHeaders,
                 body: JSON.stringify(payload)
             });
 

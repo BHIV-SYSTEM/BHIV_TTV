@@ -47,6 +47,13 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
 
 @app.exception_handler(GovernanceViolationError)
 async def governance_exception_handler(request: Request, exc: GovernanceViolationError):
+    msg = exc.message.lower()
+    if "missing" in msg or "expired" in msg:
+        return JSONResponse(
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+            content={"error": "GOVERNANCE_UNAUTHORIZED", "message": exc.message}
+        )
     return JSONResponse(
         status_code=403,
         content={"error": "GOVERNANCE_VIOLATION", "message": exc.message}

@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, Header, Request
 from typing import Optional
 
 from app.schemas.request import (
@@ -20,6 +20,7 @@ from app.utils.hashing import generate_execution_id
 from app.services.pipeline_diagnostic import diagnose_pipeline_execution
 from app.core.config import settings
 from app.core.logging import logger, telemetry
+from app.core.security import governance_guard, resolve_request_governance_token
 from app.utils.video_settings import resolve_video_settings, catalog as video_catalog
 from app.utils.languages import catalog as language_catalog
 from app.services.reference_service import reference_service
@@ -197,12 +198,35 @@ async def get_reference_details(reference_id: str):
 
 
 @router.post("/generate", response_model=GenerationResponse)
-async def generate_video(request: GenerationRequest):
+async def generate_video(
+    request: GenerationRequest,
+    auth_header: Optional[str] = Header(None, alias="Authorization"),
+    gov_header: Optional[str] = Header(None, alias="X-Governance-Token"),
+):
     """
     Initiate video generation workflow.
-    Validates payload, initializes queue job, and dispatches processing asynchronously.
+    Validates governance authorization synchronously, initializes queue job,
+    and dispatches processing asynchronously.
     """
     job_id = generate_execution_id()
+
+    # 1. Resolve governance token from headers or body
+    resolved_token = resolve_request_governance_token(
+        auth_header=auth_header,
+        gov_header=gov_header,
+        body_token=request.token
+    )
+
+    # 2. Synchronous validation: fail fast if token is missing, expired, or invalid
+    governance_guard.verify_execution(
+        token=resolved_token,
+        execution_id=job_id,
+        required_scope="video:generate"
+    )
+
+    # Update request model with normalized, verified token
+    request.token = resolved_token
+
     resolved = _resolved_settings(request)
     telemetry.emit("request_received", job_id, {
         "received_prompt": request.prompt,
