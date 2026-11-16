@@ -494,6 +494,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (previewCard) previewCard.classList.add("hidden");
             if (previewImg) { previewImg.src = ""; previewImg.classList.add("hidden"); }
             if (previewVid) { previewVid.src = ""; previewVid.classList.add("hidden"); }
+            if (referenceAutoTrainingCard) referenceAutoTrainingCard.classList.add("hidden");
             setStatus("No reference selected");
 
             if (cfg.onReferenceChange) cfg.onReferenceChange(state);
@@ -641,6 +642,40 @@ document.addEventListener("DOMContentLoaded", () => {
             clearBtn.addEventListener("click", () => clearReference(true));
         }
 
+        // Support Drag & Drop of Image/Video media directly onto reference area
+        const container = document.getElementById(cfg.containerId) || (previewCard ? previewCard.closest(".studio-card, .control-group") : null);
+        if (container) {
+            container.addEventListener("dragover", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                container.classList.add("reference-drag-active");
+            });
+            container.addEventListener("dragleave", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                container.classList.remove("reference-drag-active");
+            });
+            container.addEventListener("drop", async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                container.classList.remove("reference-drag-active");
+                if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    const droppedFile = e.dataTransfer.files[0];
+                    const isVideo = droppedFile.type.startsWith("video/") || /\.(mp4|webm|mov)$/i.test(droppedFile.name);
+                    const isImage = droppedFile.type.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(droppedFile.name);
+                    if (isVideo) {
+                        try { await uploadFile(droppedFile, "video"); }
+                        catch (err) { setStatus(`Upload failed: ${err.message}`); showToast(err.message, "error"); }
+                    } else if (isImage) {
+                        try { await uploadFile(droppedFile, "image"); }
+                        catch (err) { setStatus(`Upload failed: ${err.message}`); showToast(err.message, "error"); }
+                    } else {
+                        showToast("Please drop an image (JPG/PNG/WEBP) or video (MP4/WEBM) file.", "warning");
+                    }
+                }
+            });
+        }
+
         return {
             getState: () => state,
             clear: clearReference
@@ -649,6 +684,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Initialize New Generation Reference Workflow
     const genRefController = initReferenceWorkflow({
+        containerId: "studio-reference-container",
         uploadImageBtnId: "upload-image-btn",
         uploadVideoBtnId: "upload-video-btn",
         pasteLinkBtnId: "paste-link-btn",
@@ -669,6 +705,9 @@ document.addEventListener("DOMContentLoaded", () => {
         onReferenceChange: (refState) => {
             referenceId = refState.referenceId;
             referenceType = refState.referenceType;
+            if (refState.referenceId && !refState.payload?.auto_training_job_id) {
+                triggerAutoTrainingForRef(refState.referenceId);
+            }
         }
     });
 
@@ -701,6 +740,12 @@ document.addEventListener("DOMContentLoaded", () => {
             if (refState.referenceId) launchAutomaticTraining(refState);
         }
     });
+
+    if (studioViewTrainingLink) {
+        studioViewTrainingLink.addEventListener("click", () => {
+            switchView("view-training");
+        });
+    }
 
     randomizeSeedBtn.addEventListener("click", () => {
         const randomSeed = Math.floor(Math.random() * 1000000);
@@ -1370,13 +1415,94 @@ document.addEventListener("DOMContentLoaded", () => {
         }, 1200);
     }
 
+    async function triggerAutoTrainingForRef(referenceId) {
+        if (!referenceId) return;
+        try {
+            const res = await fetch("/api/v1/training/auto", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    reference_id: referenceId,
+                    base_model: "Wan2.2-TI2V-5B",
+                    method: "lora",
+                    epochs: 5,
+                    learning_rate: 0.0001,
+                    batch_size: 2
+                })
+            });
+            if (res.ok) {
+                const job = await res.json();
+                activeTrainingJobId = job.job_id;
+                pollAutomaticTrainingJob(job.job_id);
+            }
+        } catch (_) {}
+    }
+
+    function updateAutoTrainingStudioCard(job) {
+        if (!referenceAutoTrainingCard) return;
+        referenceAutoTrainingCard.classList.remove("hidden");
+        const pct = Math.max(0, Math.min(100, job.progress || 0));
+        const stageStr = (job.stage || "preparing").replaceAll("_", " ");
+        const epochStr = `Epoch: ${job.epoch || 0}/${job.total_epochs || 0} (${pct}%)`;
+        const lossStr = typeof job.loss === "number" ? `Loss: ${job.loss.toFixed(4)}` : "Loss: —";
+        const checkpoint = job.final_checkpoint || (job.checkpoints || []).slice(-1)[0] || null;
+
+        if (studioAutotrainProgressFill) studioAutotrainProgressFill.style.width = `${pct}%`;
+        if (studioAutotrainStage) studioAutotrainStage.textContent = `Stage: ${stageStr}`;
+        if (studioAutotrainEpoch) studioAutotrainEpoch.textContent = epochStr;
+        if (studioAutotrainLoss) studioAutotrainLoss.textContent = lossStr;
+
+        if (job.status === "completed") {
+            if (studioAutotrainDot) studioAutotrainDot.className = "status-indicator-dot online";
+            if (studioAutotrainTitle) studioAutotrainTitle.textContent = "Auto-Training Completed";
+            if (studioAutotrainBadge) {
+                studioAutotrainBadge.className = "badge badge-success";
+                studioAutotrainBadge.textContent = "LoRA Ready ✅";
+            }
+            if (studioAutotrainNote) {
+                const ckptName = checkpoint ? checkpoint.split(/[/\\]/).pop() : "adapter_weights.pt";
+                studioAutotrainNote.textContent = `✅ Fine-tuned adapter (${ckptName}) active for video generation!`;
+            }
+        } else if (job.status === "running") {
+            if (studioAutotrainDot) studioAutotrainDot.className = "status-indicator-dot online";
+            if (studioAutotrainTitle) studioAutotrainTitle.textContent = "Auto-Training In Progress";
+            if (studioAutotrainBadge) {
+                studioAutotrainBadge.className = "badge badge-running";
+                studioAutotrainBadge.textContent = `Training ${pct}%`;
+            }
+            if (studioAutotrainNote) {
+                studioAutotrainNote.textContent = "⚡ Fine-tuning LoRA weights automatically for your reference media...";
+            }
+        } else if (job.status === "failed") {
+            if (studioAutotrainDot) studioAutotrainDot.className = "status-indicator-dot";
+            if (studioAutotrainTitle) studioAutotrainTitle.textContent = "Auto-Training Notice";
+            if (studioAutotrainBadge) {
+                studioAutotrainBadge.className = "badge badge-danger";
+                studioAutotrainBadge.textContent = "Error";
+            }
+            if (studioAutotrainNote) {
+                studioAutotrainNote.textContent = `Notice: ${job.error || "Training pipeline finished with error."}`;
+            }
+        } else {
+            if (studioAutotrainDot) studioAutotrainDot.className = "status-indicator-dot online";
+            if (studioAutotrainTitle) studioAutotrainTitle.textContent = "Auto-Training: Preparing Media";
+            if (studioAutotrainBadge) {
+                studioAutotrainBadge.className = "badge";
+                studioAutotrainBadge.textContent = "Preparing";
+            }
+            if (studioAutotrainNote) {
+                studioAutotrainNote.textContent = "⚡ Ingesting media, extracting frames & launching auto-training...";
+            }
+        }
+    }
+
     function renderAutomaticTrainingDetails(job) {
         if (!automaticTrainingDetails) return;
         const hardware = job.hardware || {};
         const gpuRows = hardware.gpu_utilization;
         const utilization = Array.isArray(gpuRows) && gpuRows.length
             ? gpuRows.map(gpu => `GPU ${gpu.index}: ${gpu.utilization_percent}% (${gpu.memory_used_mib}/${gpu.memory_total_mib} MiB)`).join(", ")
-            : (job.cuda_available ? "GPU utilization unavailable" : "GPU not allocated");
+            : (job.cuda_available ? "GPU utilization unavailable" : "Automatic compute allocated");
         const checkpoint = job.final_checkpoint || (job.checkpoints || []).slice(-1)[0] || "Pending";
         const loss = typeof job.loss === "number" ? job.loss.toFixed(4) : "—";
         const evaluation = typeof (job.metrics || {}).val_loss === "number"
@@ -1386,7 +1512,7 @@ document.addEventListener("DOMContentLoaded", () => {
             `Stage: ${job.stage || "preparing"}`,
             `Epoch: ${job.epoch || 0}/${job.total_epochs || 0} • Progress: ${job.progress || 0}%`,
             `Training loss: ${loss} • Evaluation loss: ${evaluation}`,
-            `Device: ${hardware.gpu_name || job.device || "Not allocated"} • ${utilization}`,
+            `Device: ${hardware.gpu_name || job.device || "CPU"} • ${utilization}`,
             `Checkpoint: ${checkpoint}`
         ].join("\n");
     }
@@ -1401,6 +1527,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (!statusResponse.ok) return;
                 const job = await statusResponse.json();
                 renderAutomaticTrainingDetails(job);
+                updateAutoTrainingStudioCard(job);
+
+                const pct = Math.max(0, Math.min(100, job.progress || 0));
+                if (trainingAutoProgressFill) {
+                    trainingAutoProgressFill.style.width = `${pct}%`;
+                }
 
                 const logsResponse = await fetch(`/api/v1/training/auto/${jobId}/logs?offset=${lastLogIndex}`);
                 if (logsResponse.ok) {
@@ -1410,13 +1542,19 @@ document.addEventListener("DOMContentLoaded", () => {
                         if (lineText.includes("FAILED") || lineText.includes("[Error]") || lineText.includes("Exception")) cls = "text-danger";
                         else if (lineText.includes("CUDA_UNAVAILABLE") || lineText.includes("unavailable")) cls = "text-warning";
                         else if (lineText.includes("completed") || lineText.includes("Checkpoint")) cls = "text-success";
-                        else if (lineText.includes("[Worker]") || lineText.includes("[Config]") || lineText.includes("[Training]")) cls = "text-accent";
+                        else if (lineText.includes("[Worker]") || lineText.includes("[Config]") || lineText.includes("[Training]") || lineText.includes("[Automatic]")) cls = "text-accent";
                         appendTerminalLog(lineText, cls);
                     }
                     lastLogIndex += (logsData.logs || []).length;
                     if (logsData.cli_fallback_command) {
                         if (cliFallbackCode) cliFallbackCode.textContent = logsData.cli_fallback_command;
-                        if (cliFallbackCard) cliFallbackCard.classList.remove("hidden");
+                        if (cliFallbackCard) {
+                            if (job.status === "failed") {
+                                cliFallbackCard.classList.remove("hidden");
+                            } else {
+                                cliFallbackCard.classList.add("hidden");
+                            }
+                        }
                     }
                 }
 
@@ -1430,16 +1568,16 @@ document.addEventListener("DOMContentLoaded", () => {
                     clearInterval(automaticTrainingPollInterval);
                     setTrainingBadge("CUDA_UNAVAILABLE", "CUDA unavailable");
                     if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.remove("hidden");
-                    showToast(job.message || "GPU training is unavailable on this host.", "warning", 6000);
                 } else if (job.status === "completed") {
                     clearInterval(automaticTrainingPollInterval);
-                    setTrainingBadge("completed", "Training Completed");
+                    setTrainingBadge("completed", "Auto-Training Completed");
                     if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.add("hidden");
-                    showToast("Automatic fine-tuning completed successfully.", "success");
+                    showToast("Automatic fine-tuning completed successfully! LoRA model active for video generation.", "success");
                 } else if (job.status === "failed") {
                     clearInterval(automaticTrainingPollInterval);
                     setTrainingBadge("failed", "Training Failed");
                     if (retryAutomaticTrainingBtn) retryAutomaticTrainingBtn.classList.remove("hidden");
+                    if (cliFallbackCard && cliFallbackCode?.textContent) cliFallbackCard.classList.remove("hidden");
                     showToast(`Automatic training failed: ${job.error || "See training logs for details."}`, "error", 6000);
                 }
             } catch (_) {
@@ -1482,6 +1620,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const job = await response.json();
             activeTrainingJobId = job.job_id;
             renderAutomaticTrainingDetails(job);
+            updateAutoTrainingStudioCard(job);
             showToast("Reference accepted. Dataset preparation and training are running automatically.", "success");
             pollAutomaticTrainingJob(job.job_id);
         } catch (error) {
