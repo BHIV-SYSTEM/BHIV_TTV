@@ -1211,7 +1211,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             card.innerHTML = `
                 <div class="history-thumb-box">
-                    <video src="${item.video_url}" muted preload="metadata" onmouseover="this.play()" onmouseout="this.pause();this.currentTime=0;"></video>
+                    <video src="${item.video_url}" muted preload="metadata" onmouseover="this.play()" onmouseout="this.pause();this.currentTime=0;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';"></video>
+                    <div class="history-cleared-notice" style="display:none; width:100%; height:100%; align-items:center; justify-content:center; background:#18181b; color:#71717a; font-size:12px; border-radius:6px;">Media Deleted</div>
                 </div>
                 <div class="history-card-body">
                     <div class="history-meta-row">
