@@ -537,8 +537,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (urlBox) urlBox.classList.add("hidden");
             showPreview(data, file.name);
-            setStatus(`Uploaded ${data.media_type}: ${file.name}`);
-            showToast(`Reference ${data.media_type} uploaded successfully.`);
+            setStatus(`⚡ Uploaded ${data.media_type}: ${file.name}. Starting auto-training...`);
+            showToast(`Reference ${data.media_type} uploaded successfully!`, "success", 3000);
+
+            // Immediately display auto-training active widget
+            if (referenceAutoTrainingCard) {
+                referenceAutoTrainingCard.classList.remove("hidden");
+                if (studioAutotrainTitle) studioAutotrainTitle.textContent = "Auto-Training Started";
+                if (studioAutotrainBadge) {
+                    studioAutotrainBadge.className = "badge badge-running";
+                    studioAutotrainBadge.textContent = "Training Initialized";
+                }
+                if (studioAutotrainStage) studioAutotrainStage.textContent = "Stage: Preparing dataset & extracting frames";
+                if (studioAutotrainNote) studioAutotrainNote.textContent = `⚡ Fine-tuning model weights on your uploaded ${data.media_type}...`;
+            }
+
+            setTimeout(() => {
+                showToast(`🚀 Training Started: Model is fine-tuning on ${file.name}...`, "info", 5000);
+            }, 600);
+
             const autoJobId = data.auto_training_job_id;
             if (autoJobId) {
                 appendTerminalLog(`[Automatic] Triggered auto-training workflow job ${autoJobId} for ${data.reference_id}`, "text-accent");
@@ -584,8 +601,23 @@ document.addEventListener("DOMContentLoaded", () => {
                 state.payload = data;
 
                 showPreview(data, `${data.source.toUpperCase()} Reference`);
-                setStatus(`Processed ${data.media_type} from ${data.source}`);
-                showToast("Reference link processed successfully!");
+                setStatus(`⚡ Processed ${data.media_type} from ${data.source}. Starting auto-training...`);
+                showToast("Reference link processed successfully!", "success", 3000);
+
+                if (referenceAutoTrainingCard) {
+                    referenceAutoTrainingCard.classList.remove("hidden");
+                    if (studioAutotrainTitle) studioAutotrainTitle.textContent = "Auto-Training Started";
+                    if (studioAutotrainBadge) {
+                        studioAutotrainBadge.className = "badge badge-running";
+                        studioAutotrainBadge.textContent = "Training Initialized";
+                    }
+                    if (studioAutotrainStage) studioAutotrainStage.textContent = "Stage: Ingesting media & extracting frames";
+                }
+
+                setTimeout(() => {
+                    showToast("🚀 Training Started: Fine-tuning model on reference media...", "info", 5000);
+                }, 600);
+
                 const autoJobId = data.auto_training_job_id;
                 if (autoJobId) {
                     appendTerminalLog(`[Automatic] Triggered auto-training workflow job ${autoJobId} for ${data.reference_id}`, "text-accent");
@@ -1398,7 +1430,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 appendTerminalLog(`[Manifest Validated] ${file.name}: ${data.summary}`, "text-success");
-                showToast(`Dataset manifest validated: ${data.total_records} records verified!`, "success");
+                showToast(`Dataset ready (${data.valid_records} samples)! Click 'Launch Training' below to start.`, "success", 6000);
             } else {
                 throw new Error("Validation endpoint returned status " + res.status);
             }
@@ -1480,6 +1512,7 @@ document.addEventListener("DOMContentLoaded", () => {
     async function triggerAutoTrainingForRef(referenceId) {
         if (!referenceId) return;
         try {
+            showToast("🚀 Starting auto-training workflow for reference...", "info", 3000);
             const res = await fetch("/api/v1/training/auto", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -1495,6 +1528,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (res.ok) {
                 const job = await res.json();
                 activeTrainingJobId = job.job_id;
+                updateAutoTrainingStudioCard(job);
+                showToast("⚡ Training Started: Model is fine-tuning in the background!", "success", 5000);
                 pollAutomaticTrainingJob(job.job_id);
             }
         } catch (_) {}
