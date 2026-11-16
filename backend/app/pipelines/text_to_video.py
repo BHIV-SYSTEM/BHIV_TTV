@@ -131,7 +131,7 @@ class TextToVideoPipeline:
 
     def validate_video(self, video_path: str, execution_id: str, expected_duration: Optional[float] = None) -> Dict[str, Any]:
         telemetry.emit("stage_12_validate_video", execution_id)
-        is_valid, info = validate_video_file(video_path)
+        is_valid, info = validate_video_file(video_path, expected_duration=expected_duration)
         if not is_valid:
             raise VisualGenerationError(f"Video validation failed: {info.get('error')}")
         if expected_duration is not None:

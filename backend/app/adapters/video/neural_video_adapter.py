@@ -45,8 +45,18 @@ class NeuralVideoAdapter(BaseVideoAdapter):
         return self.model is not None
 
     def _find_default_checkpoint(self) -> Optional[str]:
-        """Locates the latest trained checkpoint recursively across models and training directories."""
-        # 1. Check models/lora
+        """Locates the latest trained checkpoint across models and training directories."""
+        # 1. Direct fast candidates
+        fast_candidates = [
+            settings.get_absolute_path("models/production/final_model.pt"),
+            settings.get_absolute_path("models/production/adapter_weights.pt"),
+            settings.get_absolute_path("models/lora/sim_cuda_v001/final_model.pt"),
+        ]
+        for c in fast_candidates:
+            if c.exists() and c.is_file():
+                return str(c)
+
+        # 2. Check models/lora
         lora_dir = settings.get_absolute_path("models/lora")
         if lora_dir.exists():
             for info_file in sorted(lora_dir.glob("*/version_info.json"), reverse=True):
@@ -58,25 +68,15 @@ class NeuralVideoAdapter(BaseVideoAdapter):
                         return ckpt_p
                 except Exception:
                     pass
-            for p in sorted(lora_dir.glob("**/adapter_weights.pt"), reverse=True):
-                if p.is_file():
-                    return str(p)
-            for p in sorted(lora_dir.glob("**/*.pt"), reverse=True):
+            for p in sorted(lora_dir.glob("*/adapter_weights.pt"), reverse=True):
                 if p.is_file():
                     return str(p)
 
-        # 2. Check training/checkpoints
+        # 3. Check training/checkpoints
         ckpt_dir = settings.get_absolute_path("training/checkpoints")
         if ckpt_dir.exists():
-            # Prefer real trained jobs over smoke tests
-            for p in sorted(ckpt_dir.glob("**/final_model.pt"), reverse=True):
+            for p in sorted(ckpt_dir.glob("*/final_model.pt"), reverse=True):
                 if "smoke" not in str(p) and p.is_file():
-                    return str(p)
-            for p in sorted(ckpt_dir.glob("**/final_model.pt"), reverse=True):
-                if p.is_file():
-                    return str(p)
-            for p in sorted(ckpt_dir.glob("**/*.pt"), reverse=True):
-                if p.is_file():
                     return str(p)
         return None
 
@@ -210,23 +210,50 @@ class NeuralVideoAdapter(BaseVideoAdapter):
         ).unsqueeze(0).float().to(self.device)
 
         # 2. Tokenize prompt
-        prompt_text = scene.metadata.get("enriched_prompt", scene.visual_description)
+        prompt_text = scene.metadata.get("enriched_prompt", scene.visual_description) if scene.metadata else scene.visual_description
         tokens = self.text_preprocessor.tokenize_to_tensor(prompt_text).unsqueeze(0).to(self.device)
 
-        # 3. Model inference
+        logger.info(f"[NeuralVideoAdapter] Running model inference on {self.device}...")
+        # 3. Model inference on GPU
         with torch.no_grad():
             pred_frames, _, _ = self.model(kf_tensor, tokens)
             pred_frames = pred_frames.squeeze(0) # (T, C, H, W)
+        logger.info(f"[NeuralVideoAdapter] Model inference completed. Pred frames shape: {pred_frames.shape}")
 
-        # 4. Denormalize frames
-        model_frames = [
+        # 4. Extract dense neural motion trajectory & chromatic lighting shifts
+        num_model_frames = pred_frames.shape[0]
+        raw_model_frames = [
             self.preprocessor.denormalize_tensor(pred_frames[t])
-            for t in range(pred_frames.shape[0])
+            for t in range(num_model_frames)
         ]
 
-        # 5. Temporal interpolation to match requested scene duration
+        logger.info("[NeuralVideoAdapter] Computing neural optical flow fields...")
+        f0_gray = cv2.cvtColor(raw_model_frames[0], cv2.COLOR_RGB2GRAY)
+        neural_flows = [np.zeros((128, 128, 2), dtype=np.float32)] # t=0 flow is zero
+        chroma_shifts = [np.zeros((128, 128, 3), dtype=np.float32)]
+        f0_blur = cv2.GaussianBlur(raw_model_frames[0], (15, 15), 0).astype(np.float32)
+
+        for t in range(1, num_model_frames):
+            ft_gray = cv2.cvtColor(raw_model_frames[t], cv2.COLOR_RGB2GRAY)
+            flow = cv2.calcOpticalFlowFarneback(
+                f0_gray, ft_gray,
+                None, pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0
+            )
+            neural_flows.append(flow)
+            ft_blur = cv2.GaussianBlur(raw_model_frames[t], (15, 15), 0).astype(np.float32)
+            chroma_shifts.append(ft_blur - f0_blur)
+        logger.info("[NeuralVideoAdapter] Optical flow computation completed.")
+
+        # 5. Synthesize high-resolution output frames preserving keyframe fidelity
         total_output_frames = max(12, int(scene.duration * fps))
-        indices = np.linspace(0, len(model_frames) - 1, total_output_frames)
+
+        pad_factor = 1.15
+        pad_w = int(width * pad_factor)
+        pad_h = int(height * pad_factor)
+        padded_kf_bgr = cv2.resize(img_bgr, (pad_w, pad_h), interpolation=cv2.INTER_LANCZOS4)
+
+        offset_x = (pad_w - width) // 2
+        offset_y = (pad_h - height) // 2
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, float(fps), (width, height))
@@ -236,19 +263,61 @@ class NeuralVideoAdapter(BaseVideoAdapter):
             if not out.isOpened():
                 raise VisualGenerationError(f"Failed to open VideoWriter for {output_path}")
 
-        for idx_float in indices:
+        grid_x, grid_y = np.meshgrid(np.arange(width), np.arange(height))
+        max_cam_dx = (pad_w - width) * 0.35
+        max_cam_dy = (pad_h - height) * 0.35
+        cam_motion = (scene.camera_motion or "pan_right").lower()
+
+        scale_x = width / 128.0
+        scale_y = height / 128.0
+
+        logger.info(f"[NeuralVideoAdapter] Writing {total_output_frames} output frames to {output_path}...")
+        for frame_idx in range(total_output_frames):
+            p = frame_idx / max(1, total_output_frames - 1)
+            ease = 0.5 * (1.0 - np.cos(np.pi * p))
+
+            idx_float = p * (num_model_frames - 1)
             low_idx = int(np.floor(idx_float))
-            high_idx = min(len(model_frames) - 1, int(np.ceil(idx_float)))
+            high_idx = min(num_model_frames - 1, int(np.ceil(idx_float)))
             alpha = idx_float - low_idx
 
-            frame_a = model_frames[low_idx]
-            frame_b = model_frames[high_idx]
-            interp = cv2.addWeighted(frame_a, 1.0 - alpha, frame_b, alpha, 0.0)
+            interp_flow_128 = (1.0 - alpha) * neural_flows[low_idx] + alpha * neural_flows[high_idx]
+            interp_flow_high = cv2.resize(interp_flow_128, (width, height), interpolation=cv2.INTER_LINEAR)
+            interp_flow_high[..., 0] *= scale_x
+            interp_flow_high[..., 1] *= scale_y
 
-            # Upscale to requested target resolution
-            upscaled = cv2.resize(interp, (width, height), interpolation=cv2.INTER_LANCZOS4)
-            out_bgr = cv2.cvtColor(upscaled, cv2.COLOR_RGB2BGR)
-            out.write(out_bgr)
+            interp_chroma_128 = (1.0 - alpha) * chroma_shifts[low_idx] + alpha * chroma_shifts[high_idx]
+            interp_chroma_high = cv2.resize(interp_chroma_128, (width, height), interpolation=cv2.INTER_LINEAR)
+
+            cam_dx = 0.0
+            cam_dy = 0.0
+            zoom_scale = 1.0
+
+            if "right" in cam_motion:
+                cam_dx = max_cam_dx * ease
+            elif "left" in cam_motion:
+                cam_dx = -max_cam_dx * ease
+            if "up" in cam_motion:
+                cam_dy = -max_cam_dy * ease
+            elif "down" in cam_motion:
+                cam_dy = max_cam_dy * ease
+            if "zoom_in" in cam_motion:
+                zoom_scale = 1.0 + 0.08 * ease
+            elif "zoom_out" in cam_motion:
+                zoom_scale = 1.0 - 0.08 * ease
+
+            center_x = width / 2.0
+            center_y = height / 2.0
+
+            map_x = ((grid_x - center_x) / zoom_scale + center_x + offset_x + cam_dx + interp_flow_high[..., 0]).astype(np.float32)
+            map_y = ((grid_y - center_y) / zoom_scale + center_y + offset_y + cam_dy + interp_flow_high[..., 1]).astype(np.float32)
+
+            warped = cv2.remap(padded_kf_bgr, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            chroma_bgr = cv2.cvtColor(interp_chroma_high, cv2.COLOR_RGB2BGR)
+            final_frame = np.clip(warped.astype(np.float32) + 0.15 * chroma_bgr, 0.0, 255.0).astype(np.uint8)
+
+            out.write(final_frame)
 
         out.release()
+        logger.info(f"[NeuralVideoAdapter] Successfully written video clip to {output_path}")
         return output_path

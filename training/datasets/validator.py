@@ -18,13 +18,31 @@ def compute_video_hash(video_path: str) -> str:
 
 
 def probe_video_integrity(video_path: str) -> Tuple[bool, Dict[str, Any]]:
+    if not os.path.exists(video_path):
+        return False, {"error": f"File not found: {video_path}"}
+    file_size = os.path.getsize(video_path)
+    if file_size < 100:
+        return False, {"error": f"File too small: {file_size} bytes"}
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return False, {"error": "Cannot open video"}
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+    fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    ret, frame = cap.read()
+    cap.release()
+    if not ret or frame is None or fc <= 0:
+        return False, {"error": "Corrupt or unreadable frames"}
+    dur = fc / fps if fps > 0 else 0.0
     return True, {
-        "width": 1280,
-        "height": 720,
-        "fps": 24.0,
-        "frame_count": 240,
-        "duration_seconds": 10.0,
-        "file_size_bytes": 1024
+        "width": w,
+        "height": h,
+        "fps": fps,
+        "frame_count": fc,
+        "duration_seconds": dur,
+        "file_size_bytes": file_size
     }
 
 
