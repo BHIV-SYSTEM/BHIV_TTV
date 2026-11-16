@@ -592,9 +592,27 @@ document.addEventListener("DOMContentLoaded", () => {
         if (uploadImgBtn) uploadImgBtn.addEventListener("click", () => imgInput && imgInput.click());
         if (uploadVidBtn) uploadVidBtn.addEventListener("click", () => vidInput && vidInput.click());
         if (pasteBtn && urlBox) {
-            pasteBtn.addEventListener("click", () => {
-                urlBox.classList.toggle("hidden");
-                if (!urlBox.classList.contains("hidden") && urlInput) urlInput.focus();
+            pasteBtn.addEventListener("click", async () => {
+                let clipboardUrl = "";
+                try {
+                    if (navigator.clipboard && navigator.clipboard.readText) {
+                        const text = (await navigator.clipboard.readText()).trim();
+                        if (text.startsWith("http://") || text.startsWith("https://")) {
+                            clipboardUrl = text;
+                        }
+                    }
+                } catch (_) {}
+
+                urlBox.classList.remove("hidden");
+                if (clipboardUrl && urlInput) {
+                    urlInput.value = clipboardUrl;
+                    setStatus("Pasted link from clipboard. Auto-training...");
+                    showToast("Pasted reference URL from clipboard! Starting auto-training...", "info", 3000);
+                    processUrl();
+                } else if (urlInput) {
+                    urlInput.focus();
+                    urlInput.select();
+                }
             });
         }
         if (imgInput) {
@@ -617,6 +635,18 @@ document.addEventListener("DOMContentLoaded", () => {
             processBtn.addEventListener("click", processUrl);
         }
         if (urlInput) {
+            // Immediate auto-training when user pastes a link
+            urlInput.addEventListener("paste", (e) => {
+                const pastedText = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+                const cleanUrl = pastedText.trim();
+                if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
+                    e.preventDefault();
+                    urlInput.value = cleanUrl;
+                    setStatus("Link pasted! Processing and auto-training automatically...");
+                    showToast("Link detected. Processing and starting auto-training...", "info", 3000);
+                    processUrl();
+                }
+            });
             urlInput.addEventListener("input", () => {
                 clearTimeout(urlDebounceTimer);
                 const candidate = urlInput.value.trim();
@@ -629,7 +659,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) return;
                 setStatus("Reference link detected; processing automatically...");
-                urlDebounceTimer = setTimeout(processUrl, 700);
+                urlDebounceTimer = setTimeout(processUrl, 300);
             });
             urlInput.addEventListener("keydown", (e) => {
                 if (e.key === "Enter") {
@@ -642,7 +672,7 @@ document.addEventListener("DOMContentLoaded", () => {
             clearBtn.addEventListener("click", () => clearReference(true));
         }
 
-        // Support Drag & Drop of Image/Video media directly onto reference area
+        // Support Drag & Drop of Image/Video media or URL links directly onto reference area
         const container = document.getElementById(cfg.containerId) || (previewCard ? previewCard.closest(".studio-card, .control-group") : null);
         if (container) {
             container.addEventListener("dragover", (e) => {
@@ -659,6 +689,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 e.preventDefault();
                 e.stopPropagation();
                 container.classList.remove("reference-drag-active");
+
+                // Check if a URL was dragged & dropped
+                const droppedUrl = (e.dataTransfer && (e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain"))) || "";
+                if (droppedUrl && (droppedUrl.startsWith("http://") || droppedUrl.startsWith("https://"))) {
+                    if (urlBox) urlBox.classList.remove("hidden");
+                    if (urlInput) urlInput.value = droppedUrl.trim();
+                    setStatus("Dropped link detected. Auto-training...");
+                    showToast("Link detected. Processing and starting auto-training...", "info", 3000);
+                    processUrl();
+                    return;
+                }
+
+                // Check if a media file was dropped
                 if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                     const droppedFile = e.dataTransfer.files[0];
                     const isVideo = droppedFile.type.startsWith("video/") || /\.(mp4|webm|mov)$/i.test(droppedFile.name);
@@ -714,6 +757,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize Training / Fine-Tuning Reference Workflow
     let trainReferenceState = { referenceId: null, referenceType: null, referenceUrl: null };
     const trainRefController = initReferenceWorkflow({
+        containerId: "train-reference-card",
         uploadImageBtnId: "train-upload-image-btn",
         uploadVideoBtnId: "train-upload-video-btn",
         pasteLinkBtnId: "train-paste-link-btn",
@@ -1515,6 +1559,12 @@ document.addEventListener("DOMContentLoaded", () => {
             `Device: ${hardware.gpu_name || job.device || "CPU"} • ${utilization}`,
             `Checkpoint: ${checkpoint}`
         ].join("\n");
+        if (job.status) {
+            const badgeLabel = job.status === "completed"
+                ? "Auto-Training Completed"
+                : (job.stage ? `Auto-Training: ${job.stage}` : "Auto-Training Running");
+            setTrainingBadge(job.status, badgeLabel);
+        }
     }
 
     function pollAutomaticTrainingJob(jobId) {

@@ -1,0 +1,53 @@
+{
+  "version_name": "wan_lora_train_job_20261116_064303_ed16e349",
+  "architecture": "Wan2.2-TI2V-5B",
+  "base_model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+  "method": "lora",
+  "lora_rank": 16,
+  "lora_alpha": 32.0,
+  "weights_file": "adapter_weights.pt",
+  "total_lora_tensors": 0,
+  "created_at": "2026-11-16T06:43:09Z",
+  "metrics": {
+    "best_val_loss": 0.28500000000000003,
+    "epochs": 5
+  },
+  "config": {
+    "model": {
+      "name": "Wan2.2-TI2V-5B",
+      "architecture": "Wan2.2-TI2V-5B",
+      "model_id": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+      "in_channels": 16,
+      "num_frames": 16,
+      "text_embed_dim": 4096
+    },
+    "training": {
+      "device": "cpu",
+      "learning_rate": 0.0001,
+      "weight_decay": 0.01,
+      "epochs": 5,
+      "batch_size": 2,
+      "gradient_accumulation_steps": 1,
+      "max_grad_norm": 1.0,
+      "seed": 42,
+      "use_lora": true,
+      "lora_rank": 16,
+      "lora_alpha": 32.0
+    },
+    "preprocessing": {
+      "height": 720,
+      "width": 1280,
+      "normalize_range": [
+        -1.0,
+        1.0
+      ]
+    },
+    "paths": {
+      "dataset_manifest": "generated\\training_jobs\\train_job_20261116_064303_ed16e349\\manifest.jsonl",
+      "train_manifest": "generated\\training_jobs\\train_job_20261116_064303_ed16e349\\manifest.jsonl",
+      "val_manifest": "generated\\training_jobs\\train_job_20261116_064303_ed16e349\\manifest.jsonl",
+      "checkpoint_dir": "models/lora/wan_lora_train_job_20261116_064303_ed16e349",
+      "models_dir": "models/lora"
+    }
+  }
+}

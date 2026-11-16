@@ -730,7 +730,7 @@
                             </div>
 
                             <!-- 2. Reference Media Card -->
-                            <div class="studio-card">
+                            <div class="studio-card" id="train-reference-card">
                                 <div class="reference-header-row" style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 8px;">
                                     <h3 class="card-section-title" style="margin-bottom:0;">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
@@ -754,7 +754,7 @@
                                 <div class="reference-url-box hidden" id="train-reference-url-box">
                                     <div class="url-input-row">
                                         <input type="url" id="train-reference-url-input" class="hero-prompt-textarea reference-url-input" placeholder="Paste YouTube / Instagram / Facebook / X / Image / Video URL">
-                                        <button type="button" class="ref-action-btn process-url-btn" id="train-process-link-btn">Process & Auto-Train</button>
+                                        <button type="button" class="ref-action-btn process-url-btn" id="train-process-link-btn">Auto-Train from Link</button>
                                     </div>
                                 </div>
                                 
@@ -781,9 +781,9 @@
                             <div class="studio-card">
                                 <h3 class="card-section-title">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                                    Advanced Hyperparameters & Manual Override
+                                    Auto-Training Hyperparameters
                                 </h3>
-                                <p class="text-secondary text-sm" style="margin-top:-6px; margin-bottom:12px;">Auto-training uses optimized defaults automatically. Use these controls if you wish to customize hyperparameters or manually launch a custom training run.</p>
+                                <p class="text-secondary text-sm" style="margin-top:-6px; margin-bottom:12px;">Pre-configured optimal parameters applied automatically when training starts. Adjusting any value updates future auto-training runs dynamically.</p>
 
                                 <div class="form-grid-2">
                                     <div class="control-group">
@@ -822,12 +822,18 @@
                                     </div>
                                 </div>
 
-                                <!-- Start Training CTA -->
-                                <div class="training-btn-row">
-                                    <button type="button" id="start-training-btn" class="primary-generate-btn">
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                                        <span id="start-training-btn-text">Launch Manual Training</span>
-                                    </button>
+                                <!-- Automatic Training Active Status Indicator (Replaces Manual Button) -->
+                                <div class="auto-training-active-banner">
+                                    <div class="auto-train-banner-icon">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                    </div>
+                                    <div class="auto-train-banner-content">
+                                        <h4 class="auto-train-banner-title">
+                                            <span>Automatic Training Active</span>
+                                            <span class="status-indicator-dot online"></span>
+                                        </h4>
+                                        <p class="auto-train-banner-desc">No manual click needed. Whenever you paste a media link or add an image or video, background fine-tuning executes automatically.</p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
