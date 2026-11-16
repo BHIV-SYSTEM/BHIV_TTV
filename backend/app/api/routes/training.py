@@ -137,13 +137,13 @@ async def _run_automatic_training_job(job_id: str, request: AutomaticTrainingReq
             "learning_rate": request.learning_rate,
             "batch_size": request.batch_size,
             "version_name": None,
+            "allow_cpu": True,
         }
         job["logs"].append(f"[Model] Preparing {request.base_model} with {request.method} fine-tuning.")
         queued_job = await training_job_manager.create_job(
             manifest_data=manifest_records,
             config=config,
             manifest_filename=f"{request.reference_id}.jsonl",
-            allow_cpu=True,
         )
         job["training_job_id"] = queued_job["job_id"]
         job["status"] = queued_job["status"]

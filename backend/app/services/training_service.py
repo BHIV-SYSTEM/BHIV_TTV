@@ -334,9 +334,11 @@ class TrainingJobManager:
         manifest_data: Union[str, Path, bytes, List[Dict[str, Any]]],
         config: Dict[str, Any],
         manifest_filename: Optional[str] = None,
-        allow_cpu: bool = False
+        allow_cpu: Optional[bool] = None,
+        **kwargs
     ) -> Dict[str, Any]:
-        allow_cpu = allow_cpu or bool(config.get("allow_cpu", False))
+        if allow_cpu is None:
+            allow_cpu = bool(config.get("allow_cpu", False))
         async with self._lock:
             job_id = f"train_job_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
