@@ -83,4 +83,4 @@ if frontend_dir.exists():
             return FileResponse(str(index_file))
         return {"message": "Unified Text-to-Video API is running. Frontend index.html not found."}
 
-    app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+    app.mount("/    ", StaticFiles(directory=str(frontend_dir)), name="static")

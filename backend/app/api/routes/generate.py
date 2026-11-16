@@ -19,7 +19,7 @@ from app.pipelines.text_to_video import pipeline
 from app.utils.hashing import generate_execution_id
 from app.services.pipeline_diagnostic import diagnose_pipeline_execution
 from app.core.config import settings
-from app.core.logging import telemetry
+from app.core.logging import logger, telemetry
 from app.utils.video_settings import resolve_video_settings, catalog as video_catalog
 from app.utils.languages import catalog as language_catalog
 from app.services.reference_service import reference_service

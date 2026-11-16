@@ -1,3 +1,0 @@
-file 'C:/Users/vijay/OneDrive/Desktop/text_to_video_final/generated/scenes/exec_20260921_123050_7f2dd686_scene_1_clip.mp4'
-file 'C:/Users/vijay/OneDrive/Desktop/text_to_video_final/generated/scenes/exec_20260921_123050_7f2dd686_scene_2_clip.mp4'
-file 'C:/Users/vijay/OneDrive/Desktop/text_to_video_final/generated/scenes/exec_20260921_123050_7f2dd686_scene_3_clip.mp4'

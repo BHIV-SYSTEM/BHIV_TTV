@@ -263,6 +263,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Settings View
     const settingsTokenInput = document.getElementById("settings-token-input");
+    const saveTokenBtn = document.getElementById("save-token-btn");
+    if (settingsTokenInput) {
+        const savedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
+        if (savedToken) {
+            settingsTokenInput.value = savedToken;
+        }
+    }
+    if (saveTokenBtn) {
+        saveTokenBtn.addEventListener("click", () => {
+            if (settingsTokenInput) {
+                const tokenVal = settingsTokenInput.value.trim();
+                localStorage.setItem(STORAGE_KEY_TOKEN, tokenVal);
+                showToast("Governance token saved to browser storage.", "success");
+            }
+        });
+    }
     const readoutLlm = document.getElementById("readout-llm");
     const readoutImage = document.getElementById("readout-image");
     const readoutVideo = document.getElementById("readout-video");

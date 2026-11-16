@@ -22,6 +22,28 @@ def _create_test_image_bytes() -> bytes:
     return buf.getvalue()
 
 
+def _create_test_video_bytes() -> bytes:
+    import tempfile
+    import cv2
+    import numpy as np
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+        tmp_name = tf.name
+    try:
+        writer = cv2.VideoWriter(tmp_name, cv2.VideoWriter_fourcc(*"mp4v"), 8, (64, 64))
+        frame = np.zeros((64, 64, 3), dtype=np.uint8)
+        for _ in range(8):
+            writer.write(frame)
+        writer.release()
+        with open(tmp_name, "rb") as f:
+            return f.read()
+    finally:
+        if os.path.exists(tmp_name):
+            try:
+                os.remove(tmp_name)
+            except OSError:
+                pass
+
+
 def test_reference_upload_image():
     content = _create_test_image_bytes()
     response = client.post(
@@ -167,8 +189,7 @@ def _training_config(reference_id):
 
 def test_uploaded_video_automatically_validates_and_queues_training(monkeypatch):
     submitted = _mock_training_queue(monkeypatch)
-    video_path = Path(__file__).resolve().parents[2] / "test_ball_motion.mp4"
-    content = video_path.read_bytes()
+    content = _create_test_video_bytes()
     upload = client.post(
         "/api/v1/references/upload",
         files={"file": ("training_video.mp4", content, "video/mp4")},
@@ -197,8 +218,7 @@ def test_uploaded_video_automatically_validates_and_queues_training(monkeypatch)
 
 def test_supported_video_url_automatically_validates_and_queues_training(monkeypatch):
     submitted = _mock_training_queue(monkeypatch)
-    video_path = Path(__file__).resolve().parents[2] / "test_ball_motion.mp4"
-    content = video_path.read_bytes()
+    content = _create_test_video_bytes()
 
     async def authorized_youtube_retrieval(url, reference_id=None):
         payload = reference_service.save_upload("youtube_reference.mp4", content, "video/mp4")
