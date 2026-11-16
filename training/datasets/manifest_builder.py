@@ -93,7 +93,7 @@ def build_manifest_from_directory(
 
     # Generate train/val/test splits if requested
     if do_split and valid_samples:
-        splits = split_dataset(valid_samples, train_ratio=0.7, val_ratio=0.15, seed=seed)
+        splits = split_dataset(valid_samples, train_ratio=0.75, val_ratio=0.15, seed=seed)
         split_dir = out_path.parent
         for split_name, split_samples in splits.items():
             split_file = split_dir / f"{out_path.stem}_{split_name}.jsonl"

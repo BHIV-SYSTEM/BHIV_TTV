@@ -117,6 +117,7 @@ class TTVTrainer:
         # Apply LoRA if requested
         if self.use_lora:
             apply_lora_to_model(self.model, rank=self.lora_rank, alpha=self.lora_alpha)
+            self.model = self.model.to(self.device)
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         else:
             trainable_params = list(self.model.parameters())

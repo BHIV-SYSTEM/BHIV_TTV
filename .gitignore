@@ -52,6 +52,7 @@ generated/videos/*
 generated/references/*
 generated/temp/*
 generated/training_jobs/*
+ttv_env/
 !generated/**/.gitkeep
 
 # IDE

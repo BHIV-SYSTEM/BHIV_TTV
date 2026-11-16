@@ -143,6 +143,7 @@ class NeuralVideoAdapter(BaseVideoAdapter):
             if "lora_state_dict" in ckpt:
                 load_lora_state_dict(self.model, ckpt["lora_state_dict"])
 
+            self.model = self.model.to(self.device)
             self.model.eval()
 
             total_params = sum(p.numel() for p in self.model.parameters())
