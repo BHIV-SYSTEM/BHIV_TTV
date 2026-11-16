@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Query
 from fastapi.responses import JSONResponse
 
+from pydantic import BaseModel
 from app.core.config import settings
 from app.core.logging import telemetry, logger
 from app.core.exceptions import ValidationError
@@ -142,6 +143,7 @@ async def _run_automatic_training_job(job_id: str, request: AutomaticTrainingReq
             manifest_data=manifest_records,
             config=config,
             manifest_filename=f"{request.reference_id}.jsonl",
+            allow_cpu=True,
         )
         job["training_job_id"] = queued_job["job_id"]
         job["status"] = queued_job["status"]
@@ -227,6 +229,13 @@ async def start_automatic_training(request: AutomaticTrainingRequest):
     return AutomaticTrainingJobResponse(**_automatic_training_snapshot(job_id))
 
 
+class TriggerAutoTrainingRequest(BaseModel):
+    reference_id: Optional[str] = None
+    reference_url: Optional[str] = None
+    base_model: Optional[str] = "Wan2.2-TI2V-5B"
+    epochs: Optional[int] = 5
+
+
 async def trigger_automatic_training_for_reference(reference_id: str, base_model: str = "Wan2.2-TI2V-5B") -> str:
     """Helper to dispatch automatic training whenever a reference is uploaded or processed."""
     request = AutomaticTrainingRequest(
@@ -239,6 +248,26 @@ async def trigger_automatic_training_for_reference(reference_id: str, base_model
     )
     res = await start_automatic_training(request)
     return res.job_id
+
+
+@router.post("/auto/trigger", response_model=AutomaticTrainingJobResponse)
+async def trigger_auto_training_endpoint(payload: TriggerAutoTrainingRequest):
+    """Explicitly triggers or verifies automatic training for a reference by ID or URL."""
+    ref_id = payload.reference_id
+    if not ref_id and payload.reference_url:
+        ref_payload = await reference_service.ingest_url(payload.reference_url)
+        ref_id = ref_payload["reference_id"]
+    if not ref_id:
+        raise HTTPException(status_code=400, detail="Either reference_id or reference_url must be provided.")
+    request = AutomaticTrainingRequest(
+        reference_id=ref_id,
+        base_model=payload.base_model or "Wan2.2-TI2V-5B",
+        method="lora",
+        epochs=payload.epochs or 5,
+        learning_rate=0.0001,
+        batch_size=2,
+    )
+    return await start_automatic_training(request)
 
 
 @router.get("/auto/{job_id}", response_model=AutomaticTrainingJobResponse)

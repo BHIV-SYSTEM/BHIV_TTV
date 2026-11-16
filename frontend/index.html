@@ -186,8 +186,14 @@
                                     <p class="output-readout" id="output-readout">Output: 1280 × 720</p>
                                 </div>
 
-                                <div class="control-group control-span-2">
-                                    <label class="field-label">Reference</label>
+                                <div class="control-group control-span-2" id="studio-reference-container">
+                                    <div class="reference-header-row" style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px;">
+                                        <label class="field-label" style="margin-bottom:0;">Reference Media</label>
+                                        <span class="badge badge-success text-xs" style="display:inline-flex; align-items:center; gap:4px; font-weight: 500;">
+                                            <span class="status-indicator-dot online" style="width:6px; height:6px;"></span>
+                                            Auto-Training Active
+                                        </span>
+                                    </div>
                                     <div class="reference-actions">
                                         <button type="button" class="ref-action-btn" id="upload-image-btn">Upload Image</button>
                                         <button type="button" class="ref-action-btn" id="upload-video-btn">Upload Video</button>
@@ -198,7 +204,7 @@
                                     <div class="reference-url-box hidden" id="reference-url-box">
                                         <div class="url-input-row">
                                             <input type="url" id="reference-url-input" class="hero-prompt-textarea reference-url-input" placeholder="Paste YouTube / Instagram / Facebook / X / Image / Video URL">
-                                            <button type="button" class="ref-action-btn process-url-btn" id="process-link-btn">Retry Processing</button>
+                                            <button type="button" class="ref-action-btn process-url-btn" id="process-link-btn">Process & Auto-Train</button>
                                         </div>
                                     </div>
                                     <div class="reference-preview-card hidden" id="reference-preview-card">
@@ -216,6 +222,30 @@
                                         </div>
                                         <button type="button" class="preview-clear-btn" id="reference-clear-btn" title="Remove Reference">✕</button>
                                     </div>
+
+                                    <!-- Studio Auto-Training Live Widget -->
+                                    <div class="reference-auto-training-card hidden" id="reference-auto-training-card">
+                                        <div class="auto-train-header">
+                                            <div class="auto-train-title-row">
+                                                <span class="status-indicator-dot online" id="studio-autotrain-dot"></span>
+                                                <span class="auto-train-title" id="studio-autotrain-title">Auto-Training In Progress</span>
+                                            </div>
+                                            <span class="badge" id="studio-autotrain-badge">LoRA Fine-Tuning</span>
+                                        </div>
+                                        <div class="auto-train-progress-bar-bg">
+                                            <div class="auto-train-progress-bar-fill" id="studio-autotrain-progress-fill" style="width: 0%;"></div>
+                                        </div>
+                                        <div class="auto-train-stats-row">
+                                            <span class="auto-train-stat" id="studio-autotrain-stage">Stage: Preparing reference</span>
+                                            <span class="auto-train-stat" id="studio-autotrain-epoch">Epoch: 0/5</span>
+                                            <span class="auto-train-stat" id="studio-autotrain-loss">Loss: —</span>
+                                        </div>
+                                        <div class="auto-train-footer">
+                                            <span class="auto-train-subtext" id="studio-autotrain-note">⚡ Video/image link automatically fine-tunes model weights without manual clicks.</span>
+                                            <button type="button" class="btn-text-link" id="studio-view-training-link">View Training Details →</button>
+                                        </div>
+                                    </div>
+
                                     <p class="output-readout" id="reference-status">No reference selected</p>
                                 </div>
 
@@ -701,11 +731,17 @@
 
                             <!-- 2. Reference Media Card -->
                             <div class="studio-card">
-                                <h3 class="card-section-title">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-                                    Reference Media
-                                </h3>
-                                <p class="text-secondary text-sm" style="margin-top:-6px; margin-bottom:12px;">Upload images or videos up to 60 minutes (15, 20, 30, 45, 60 min), or paste video URLs. Processing, frame extraction, validation, and GPU training start automatically without manual clicks.</p>
+                                <div class="reference-header-row" style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 8px;">
+                                    <h3 class="card-section-title" style="margin-bottom:0;">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                                        Auto-Training Reference Media
+                                    </h3>
+                                    <span class="badge badge-success text-xs" style="display:inline-flex; align-items:center; gap:4px; font-weight: 500;">
+                                        <span class="status-indicator-dot online" style="width:6px; height:6px;"></span>
+                                        Auto-Train Active
+                                    </span>
+                                </div>
+                                <p class="text-secondary text-sm" style="margin-top:-2px; margin-bottom:12px;">Upload images or videos up to 60 minutes, or paste public video/image URLs. Media processing, frame extraction, validation, and model fine-tuning run 100% automatically in the background without manual clicks.</p>
                                 
                                 <div class="reference-actions">
                                     <button type="button" class="ref-action-btn" id="train-upload-image-btn">Upload Image</button>
@@ -718,7 +754,7 @@
                                 <div class="reference-url-box hidden" id="train-reference-url-box">
                                     <div class="url-input-row">
                                         <input type="url" id="train-reference-url-input" class="hero-prompt-textarea reference-url-input" placeholder="Paste YouTube / Instagram / Facebook / X / Image / Video URL">
-                                        <button type="button" class="ref-action-btn process-url-btn" id="train-process-link-btn">Retry Processing</button>
+                                        <button type="button" class="ref-action-btn process-url-btn" id="train-process-link-btn">Process & Auto-Train</button>
                                     </div>
                                 </div>
                                 
@@ -745,8 +781,9 @@
                             <div class="studio-card">
                                 <h3 class="card-section-title">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                                    Manual / Advanced Training
+                                    Advanced Hyperparameters & Manual Override
                                 </h3>
+                                <p class="text-secondary text-sm" style="margin-top:-6px; margin-bottom:12px;">Auto-training uses optimized defaults automatically. Use these controls if you wish to customize hyperparameters or manually launch a custom training run.</p>
 
                                 <div class="form-grid-2">
                                     <div class="control-group">
@@ -807,10 +844,13 @@
                                     <span class="badge" id="training-session-status">Worker Ready</span>
                                 </div>
 
+                                <div class="auto-train-progress-bar-bg" style="margin-bottom: 12px;">
+                                    <div class="auto-train-progress-bar-fill" id="training-auto-progress-fill" style="width: 0%;"></div>
+                                </div>
                                 <pre class="output-readout" id="training-auto-details">Stage: Waiting for a reference
 Epoch: 0/0 • Progress: 0%
 Training loss: — • Evaluation loss: Pending
-Device: Not allocated • GPU not allocated
+Device: Not allocated • Compute ready
 Checkpoint: Pending</pre>
                                 <button type="button" id="retry-auto-training-btn" class="ref-action-btn hidden">Retry Automatic Training</button>
                                 <div class="terminal-log-window" id="training-terminal-log">

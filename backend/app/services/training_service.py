@@ -333,8 +333,10 @@ class TrainingJobManager:
         self,
         manifest_data: Union[str, Path, bytes, List[Dict[str, Any]]],
         config: Dict[str, Any],
-        manifest_filename: Optional[str] = None
+        manifest_filename: Optional[str] = None,
+        allow_cpu: bool = False
     ) -> Dict[str, Any]:
+        allow_cpu = allow_cpu or bool(config.get("allow_cpu", False))
         async with self._lock:
             job_id = f"train_job_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
@@ -474,15 +476,24 @@ class TrainingJobManager:
             ]
 
             if not cuda_available:
-                status = "CUDA_UNAVAILABLE"
-                stage = "cuda_unavailable"
-                initial_logs.extend([
-                    "[CUDA Check] FAILED: torch.cuda.is_available() is False.",
-                    f"[Status] {status}: Training worker cannot launch without NVIDIA CUDA acceleration.",
-                    "[Manual Fallback] Run the reviewed CLI command in a CUDA training environment:",
-                    f"  {cli_fallback_command}"
-                ])
-                message = "CUDA is unavailable on this system. Job registered with manual CLI fallback command."
+                if allow_cpu:
+                    status = "queued"
+                    stage = "queued"
+                    initial_logs.extend([
+                        f"[Hardware] Automatic compute adaptation: executing on {hw_profile.get('device_type', 'cpu').upper()}.",
+                        "[Worker] Auto-training queued for automatic background execution."
+                    ])
+                    message = "Auto-training job successfully queued on available compute hardware."
+                else:
+                    status = "CUDA_UNAVAILABLE"
+                    stage = "cuda_unavailable"
+                    initial_logs.extend([
+                        "[CUDA Check] FAILED: torch.cuda.is_available() is False.",
+                        f"[Status] {status}: Training worker cannot launch without NVIDIA CUDA acceleration.",
+                        "[Manual Fallback] Run the reviewed CLI command in a CUDA training environment:",
+                        f"  {cli_fallback_command}"
+                    ])
+                    message = "CUDA is unavailable on this system. Job registered with manual CLI fallback command."
             else:
                 status = "queued"
                 stage = "queued"
@@ -514,15 +525,15 @@ class TrainingJobManager:
                 "final_checkpoint": None,
                 "metrics": {},
                 "logs": initial_logs,
-                "error": cuda_msg if not cuda_available else None,
+                "error": cuda_msg if (not cuda_available and not allow_cpu) else None,
                 "message": message
             }
 
             self._jobs[job_id] = job_state
             self._persist_job(job_id)
 
-            # If CUDA is available, launch worker background thread
-            if cuda_available:
+            # Launch worker background thread if CUDA is available or allow_cpu is enabled
+            if cuda_available or allow_cpu:
                 self._run_training_subprocess(job_id, config_file, version_name)
 
             return job_state
@@ -540,6 +551,7 @@ class TrainingJobManager:
             try:
                 cmd = [
                     sys.executable,
+                    "-u",
                     "-m",
                     "training.run_training",
                     "--config",
@@ -548,9 +560,17 @@ class TrainingJobManager:
                     version_name
                 ]
 
+                env = os.environ.copy()
+                pythonpath_parts = [str(WORKSPACE_ROOT), str(WORKSPACE_ROOT / "backend")]
+                if "PYTHONPATH" in env:
+                    pythonpath_parts.append(env["PYTHONPATH"])
+                env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+                env["PYTHONUNBUFFERED"] = "1"
+
                 process = subprocess.Popen(
                     cmd,
                     cwd=str(WORKSPACE_ROOT),
+                    env=env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -589,7 +609,7 @@ class TrainingJobManager:
                                 ckpt_path = ckpt_match.group(1).strip()
                                 if ckpt_path not in self._jobs[job_id]["checkpoints"]:
                                     self._jobs[job_id]["checkpoints"].append(ckpt_path)
-                                if Path(ckpt_path).name == "final_model.pt":
+                                if "final_model" in Path(ckpt_path).name or "adapter_weights" in Path(ckpt_path).name:
                                     self._jobs[job_id]["final_checkpoint"] = ckpt_path
 
                             self._jobs[job_id]["updated_at"] = datetime.utcnow().isoformat() + "Z"

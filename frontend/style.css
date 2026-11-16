@@ -834,6 +834,105 @@ select:focus, input:focus {
     background: rgba(239, 68, 68, 0.1);
 }
 
+/* Auto-Training Live Widget */
+.reference-auto-training-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    background: linear-gradient(135deg, rgba(30, 32, 54, 0.85) 0%, rgba(20, 22, 38, 0.95) 100%);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    border-radius: var(--radius-md);
+    margin: 8px 0;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    transition: all var(--transition-fast);
+}
+
+.reference-auto-training-card:hover {
+    border-color: rgba(99, 102, 241, 0.6);
+}
+
+.auto-train-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.auto-train-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.auto-train-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+
+.auto-train-progress-bar-bg {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+
+.auto-train-progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6366f1 0%, #38bdf8 50%, #10b981 100%);
+    border-radius: 3px;
+    transition: width 0.35s ease;
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+}
+
+.auto-train-stats-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+}
+
+.auto-train-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.auto-train-subtext {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.btn-text-link {
+    background: transparent;
+    border: none;
+    color: var(--brand-primary, #6366f1);
+    font-size: 0.72rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: all var(--transition-fast);
+}
+
+.btn-text-link:hover {
+    color: #818cf8;
+    text-decoration: underline;
+}
+
+.reference-drag-active {
+    border-color: var(--brand-primary) !important;
+    background: rgba(99, 102, 241, 0.08) !important;
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.25) !important;
+}
+
 
 /* Advanced Collapsible Accordion */
 .advanced-accordion {

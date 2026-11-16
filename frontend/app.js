@@ -214,6 +214,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const cliFallbackCode = document.getElementById("cli-fallback-code");
     const automaticTrainingDetails = document.getElementById("training-auto-details");
     const retryAutomaticTrainingBtn = document.getElementById("retry-auto-training-btn");
+    const trainingAutoProgressFill = document.getElementById("training-auto-progress-fill");
+
+    // Studio Auto-Training Live Widget Elements
+    const referenceAutoTrainingCard = document.getElementById("reference-auto-training-card");
+    const studioAutotrainDot = document.getElementById("studio-autotrain-dot");
+    const studioAutotrainTitle = document.getElementById("studio-autotrain-title");
+    const studioAutotrainBadge = document.getElementById("studio-autotrain-badge");
+    const studioAutotrainProgressFill = document.getElementById("studio-autotrain-progress-fill");
+    const studioAutotrainStage = document.getElementById("studio-autotrain-stage");
+    const studioAutotrainEpoch = document.getElementById("studio-autotrain-epoch");
+    const studioAutotrainLoss = document.getElementById("studio-autotrain-loss");
+    const studioAutotrainNote = document.getElementById("studio-autotrain-note");
+    const studioViewTrainingLink = document.getElementById("studio-view-training-link");
     let selectedManifestFile = null;
     let trainingPollInterval = null;
     let automaticTrainingPollInterval = null;
@@ -508,9 +521,12 @@ document.addEventListener("DOMContentLoaded", () => {
             showPreview(data, file.name);
             setStatus(`Uploaded ${data.media_type}: ${file.name}`);
             showToast(`Reference ${data.media_type} uploaded successfully.`);
-            if (data.auto_training_job_id) {
-                appendTerminalLog(`[Automatic] Triggered training workflow job ${data.auto_training_job_id} for ${data.reference_id}`, "text-accent");
-                pollAutomaticTrainingJob(data.auto_training_job_id);
+            const autoJobId = data.auto_training_job_id;
+            if (autoJobId) {
+                appendTerminalLog(`[Automatic] Triggered auto-training workflow job ${autoJobId} for ${data.reference_id}`, "text-accent");
+                pollAutomaticTrainingJob(autoJobId);
+            } else if (data.reference_id) {
+                triggerAutoTrainingForRef(data.reference_id);
             }
             if (cfg.onReferenceChange) cfg.onReferenceChange(state);
         }
@@ -552,9 +568,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 showPreview(data, `${data.source.toUpperCase()} Reference`);
                 setStatus(`Processed ${data.media_type} from ${data.source}`);
                 showToast("Reference link processed successfully!");
-                if (data.auto_training_job_id) {
-                    appendTerminalLog(`[Automatic] Triggered training workflow job ${data.auto_training_job_id} for ${data.reference_id}`, "text-accent");
-                    pollAutomaticTrainingJob(data.auto_training_job_id);
+                const autoJobId = data.auto_training_job_id;
+                if (autoJobId) {
+                    appendTerminalLog(`[Automatic] Triggered auto-training workflow job ${autoJobId} for ${data.reference_id}`, "text-accent");
+                    pollAutomaticTrainingJob(autoJobId);
+                } else if (data.reference_id) {
+                    triggerAutoTrainingForRef(data.reference_id);
                 }
                 if (cfg.onReferenceChange) cfg.onReferenceChange(state);
             } catch (err) {

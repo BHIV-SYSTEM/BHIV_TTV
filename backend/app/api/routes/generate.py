@@ -49,6 +49,19 @@ def _resolved_settings(request: GenerationRequest) -> GenerationSettings:
 async def _run_generation_task(job_id: str, request: GenerationRequest):
     """Background execution runner with progress updates."""
     try:
+        # Guarantee automatic fine-tuning is triggered in the background for any provided reference
+        if request.reference_id or request.reference_url:
+            try:
+                from app.api.routes.training import trigger_automatic_training_for_reference
+                target_ref = request.reference_id or request.reference_file
+                if not target_ref and request.reference_url:
+                    ref_p = await reference_service.ingest_url(request.reference_url)
+                    target_ref = ref_p.get("reference_id")
+                if target_ref:
+                    asyncio.create_task(trigger_automatic_training_for_reference(target_ref))
+            except Exception as auto_err:
+                logger.warning(f"Could not auto-trigger background training during generation: {auto_err}")
+
         async def _progress_callback(stage: str, pct: int):
             await job_manager.update_progress(job_id, stage, pct)
 
