@@ -7,7 +7,16 @@ class JobManager:
     """Manages asynchronous generation jobs and their execution states."""
     def __init__(self):
         self._jobs: Dict[str, Dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._lock is None or (loop and getattr(self._lock, "_loop", None) not in (None, loop)):
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def create_job(
         self,
@@ -15,7 +24,7 @@ class JobManager:
         request_data: Dict[str, Any],
         settings: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        async with self._lock:
+        async with self._get_lock():
             resolved_settings = settings or {}
             aspect_ratio = resolved_settings.get("aspect_ratio") or request_data.get("aspect_ratio") or "16:9"
             visual_style = (
@@ -55,7 +64,7 @@ class JobManager:
             return job
 
     async def update_progress(self, job_id: str, stage: str, progress: int):
-        async with self._lock:
+        async with self._get_lock():
             if job_id in self._jobs:
                 self._jobs[job_id]["status"] = "processing"
                 self._jobs[job_id]["stage"] = stage
@@ -69,7 +78,7 @@ class JobManager:
         video_status: Optional[str] = None,
         lip_sync_status: Optional[str] = None,
     ):
-        async with self._lock:
+        async with self._get_lock():
             if job_id in self._jobs:
                 if tts_status is not None:
                     self._jobs[job_id]["tts_status"] = tts_status
@@ -80,7 +89,7 @@ class JobManager:
                 self._jobs[job_id]["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
     async def complete_job(self, job_id: str, result_data: Dict[str, Any]):
-        async with self._lock:
+        async with self._get_lock():
             if job_id in self._jobs:
                 self._jobs[job_id]["status"] = "completed"
                 self._jobs[job_id]["stage"] = "completed"
@@ -94,7 +103,7 @@ class JobManager:
                 self._jobs[job_id]["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
     async def fail_job(self, job_id: str, error_message: str):
-        async with self._lock:
+        async with self._get_lock():
             if job_id in self._jobs:
                 self._jobs[job_id]["status"] = "failed"
                 self._jobs[job_id]["stage"] = "failed"

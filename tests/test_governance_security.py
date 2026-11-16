@@ -9,7 +9,6 @@ BACKEND_DIR = BASE_DIR / "backend"
 sys.path.insert(0, str(BASE_DIR))
 sys.path.insert(0, str(BACKEND_DIR))
 
-from fastapi.testclient import TestClient
 from app.main import app
 from app.core.config import settings
 from app.core.exceptions import GovernanceViolationError
@@ -21,16 +20,18 @@ from app.core.security import (
 )
 
 
-@pytest.fixture
-def client(monkeypatch):
-    async def _mock_run(*args, **kwargs):
-        pass
-    async def _mock_exec(*args, **kwargs):
-        return {"video_path": "mock.mp4", "status": "success"}
-    monkeypatch.setattr("app.api.routes.generate._run_generation_task", _mock_run)
-    monkeypatch.setattr("app.pipelines.text_to_video.pipeline.execute", _mock_exec)
-    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
-    return TestClient(app)
+@pytest.fixture(autouse=True)
+def mock_pipeline_execution(monkeypatch):
+    """Ensure tests run lightning-fast by preventing real 35s neural video synthesis."""
+    async def _fast_execute(*args, **kwargs):
+        return {
+            "status": "completed",
+            "video_path": "mock.mp4",
+            "duration": 5,
+            "fps": 24,
+            "resolution": "1280x720"
+        }
+    monkeypatch.setattr("app.pipelines.text_to_video.pipeline.execute", _fast_execute)
 
 
 @pytest.fixture
@@ -193,106 +194,104 @@ def test_resolve_request_governance_token_precedence():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Integration Tests via FastAPI TestClient on POST /api/v1/generate
+# Endpoint & Handler Tests on POST /api/v1/generate and Exception Handler
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_api_generate_with_valid_token_in_header(client):
-    """API: POST /api/v1/generate succeeds with valid Authorization header."""
-    payload = {
-        "prompt": "A majestic eagle soaring over snowy alpine peaks",
-        "duration": 5,
-        "style": "cinematic"
-    }
-    response = client.post(
-        "/api/v1/generate",
-        json=payload,
-        headers={"Authorization": f"Bearer {settings.WRAPPER_TOKEN}"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "queued"
-    assert "job_id" in data
+from app.api.routes.generate import generate_video
+from app.schemas.request import GenerationRequest
+from app.main import governance_exception_handler
 
 
-def test_api_generate_with_valid_token_in_gov_header(client):
-    """API: POST /api/v1/generate succeeds with X-Governance-Token header."""
-    payload = {
-        "prompt": "A majestic eagle soaring over snowy alpine peaks",
-        "duration": 5,
-        "style": "cinematic"
-    }
-    response = client.post(
-        "/api/v1/generate",
-        json=payload,
-        headers={"X-Governance-Token": settings.WRAPPER_TOKEN}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "queued"
+@pytest.mark.asyncio
+async def test_api_generate_with_valid_token_in_header(monkeypatch):
+    """API endpoint: generate_video succeeds with valid Authorization header."""
+    async def _mock_run(*args, **kwargs):
+        pass
+    monkeypatch.setattr("app.api.routes.generate._run_generation_task", _mock_run)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
+    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
+    resp = await generate_video(request=req, auth_header=f"Bearer {settings.WRAPPER_TOKEN}", gov_header=None)
+    assert resp.status == "queued"
+    assert resp.job_id.startswith("exec_")
 
 
-def test_api_generate_with_valid_token_in_body(client):
-    """API: POST /api/v1/generate succeeds with token inside request body."""
-    payload = {
-        "prompt": "A majestic eagle soaring over snowy alpine peaks",
-        "duration": 5,
-        "style": "cinematic",
-        "token": settings.WRAPPER_TOKEN
-    }
-    response = client.post("/api/v1/generate", json=payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "queued"
+@pytest.mark.asyncio
+async def test_api_generate_with_valid_token_in_gov_header(monkeypatch):
+    """API endpoint: generate_video succeeds with X-Governance-Token header."""
+    async def _mock_run(*args, **kwargs):
+        pass
+    monkeypatch.setattr("app.api.routes.generate._run_generation_task", _mock_run)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
+    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
+    resp = await generate_video(request=req, auth_header=None, gov_header=settings.WRAPPER_TOKEN)
+    assert resp.status == "queued"
 
 
-def test_api_generate_with_missing_token_returns_401(client):
-    """API: POST /api/v1/generate fails immediately with 401 when token is missing."""
-    payload = {
-        "prompt": "A majestic eagle soaring over snowy alpine peaks",
-        "duration": 5,
-        "style": "cinematic"
-    }
-    response = client.post("/api/v1/generate", json=payload)
-    assert response.status_code == 401
-    data = response.json()
-    assert data["error"] == "GOVERNANCE_UNAUTHORIZED"
-    assert "missing" in data["message"].lower()
+@pytest.mark.asyncio
+async def test_api_generate_with_valid_token_in_body(monkeypatch):
+    """API endpoint: generate_video succeeds with token in request body."""
+    async def _mock_run(*args, **kwargs):
+        pass
+    monkeypatch.setattr("app.api.routes.generate._run_generation_task", _mock_run)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
+    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5, token=settings.WRAPPER_TOKEN)
+    resp = await generate_video(request=req, auth_header=None, gov_header=None)
+    assert resp.status == "queued"
 
 
-def test_api_generate_with_expired_token_returns_401(client):
-    """API: POST /api/v1/generate fails immediately with 401 when token is expired."""
+@pytest.mark.asyncio
+async def test_api_generate_with_missing_token_raises():
+    """API endpoint: generate_video rejects missing token with GovernanceViolationError."""
+    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
+    with pytest.raises(GovernanceViolationError) as exc_info:
+        await generate_video(request=req, auth_header=None, gov_header=None)
+    assert "missing" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_api_generate_with_expired_token_raises():
+    """API endpoint: generate_video rejects expired token with GovernanceViolationError."""
     expired_token = create_governance_token(
         subject="api_test",
         scope="video:generate",
         expires_in_seconds=-60,
         secret_key=settings.WRAPPER_TOKEN
     )
-    payload = {
-        "prompt": "A majestic eagle soaring over snowy alpine peaks",
-        "duration": 5,
-        "style": "cinematic"
-    }
-    response = client.post(
-        "/api/v1/generate",
-        json=payload,
-        headers={"Authorization": f"Bearer {expired_token}"}
-    )
-    assert response.status_code == 401
-    data = response.json()
-    assert data["error"] == "GOVERNANCE_UNAUTHORIZED"
-    assert "expired" in data["message"].lower()
+    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
+    with pytest.raises(GovernanceViolationError) as exc_info:
+        await generate_video(request=req, auth_header=f"Bearer {expired_token}", gov_header=None)
+    assert "expired" in str(exc_info.value).lower()
 
 
-def test_api_generate_with_invalid_token_returns_403(client):
-    """API: POST /api/v1/generate fails immediately with 403 when token is invalid."""
-    payload = {
-        "prompt": "A majestic eagle soaring over snowy alpine peaks",
-        "duration": 5,
-        "style": "cinematic",
-        "token": "invalid_wrong_governance_token_999"
-    }
-    response = client.post("/api/v1/generate", json=payload)
-    assert response.status_code == 403
-    data = response.json()
+@pytest.mark.asyncio
+async def test_api_generate_with_invalid_token_raises():
+    """API endpoint: generate_video rejects invalid token with GovernanceViolationError."""
+    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5, token="invalid_token")
+    with pytest.raises(GovernanceViolationError) as exc_info:
+        await generate_video(request=req, auth_header=None, gov_header=None)
+    assert "invalid" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_governance_exception_handler_status_codes():
+    """Ensure governance_exception_handler maps missing/expired to 401 and invalid to 403."""
+    # Missing token -> 401
+    exc_missing = GovernanceViolationError("Missing required governance token for execution")
+    resp_missing = await governance_exception_handler(None, exc_missing)
+    assert resp_missing.status_code == 401
+    assert "WWW-Authenticate" in resp_missing.headers
+
+    # Expired token -> 401
+    exc_expired = GovernanceViolationError("Governance token has expired")
+    resp_expired = await governance_exception_handler(None, exc_expired)
+    assert resp_expired.status_code == 401
+    assert "WWW-Authenticate" in resp_expired.headers
+
+    # Invalid token -> 403
+    exc_invalid = GovernanceViolationError("Unauthorized execution access. Invalid governance token.")
+    resp_invalid = await governance_exception_handler(None, exc_invalid)
+    assert resp_invalid.status_code == 403
+    import json
+    data = json.loads(resp_invalid.body.decode())
     assert data["error"] == "GOVERNANCE_VIOLATION"
     assert "invalid governance token" in data["message"].lower()

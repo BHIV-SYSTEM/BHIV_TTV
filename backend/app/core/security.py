@@ -224,16 +224,16 @@ def resolve_request_governance_token(
     2. Authorization: Bearer <token>
     3. Body payload token (request.token)
     """
-    if gov_header and gov_header.strip():
+    if isinstance(gov_header, str) and gov_header.strip():
         return gov_header.strip()
 
-    if auth_header and auth_header.strip():
+    if isinstance(auth_header, str) and auth_header.strip():
         val = auth_header.strip()
         if val.lower().startswith("bearer "):
             return val[7:].strip()
         return val
 
-    if body_token and body_token.strip():
+    if isinstance(body_token, str) and body_token.strip():
         return body_token.strip()
 
     return None
