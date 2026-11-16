@@ -7,7 +7,7 @@ from pydantic import Field
 # Determine project base directory (workspace root)
 # If backend/app/core/config.py, parents[2] is backend, parents[3] is text_to_video_final
 CURRENT_FILE = Path(__file__).resolve()
-WORKSPACE_ROOT = CURRENT_FILE.parents[3]
+WORKSPACE_ROOT = Path(os.environ.get("APP_ROOT", str(CURRENT_FILE.parents[3])))
 import sys
 if str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))

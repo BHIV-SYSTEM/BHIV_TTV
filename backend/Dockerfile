@@ -21,6 +21,7 @@ COPY app/ ./app/
 
 # Set Python path
 ENV PYTHONPATH=/app
+ENV APP_ROOT=/app
 
 # Expose API port
 EXPOSE 8000
