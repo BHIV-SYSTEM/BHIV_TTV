@@ -1,0 +1,53 @@
+{
+  "version": "sim_cuda_v001",
+  "model_type": "lora",
+  "base_model": "spatial_temporal_ttv_smoke",
+  "dataset_version": "dataset_v1",
+  "checkpoint_path": "C:\\Users\\vijay\\OneDrive\\Desktop\\text_to_video_final\\training\\checkpoints\\train_job_20261114_124342_97d85ed7\\final_model.pt",
+  "weights_sha256": "cee0a92e14580038af15353846b2798ffbfa7a809de433c3f5bcd42ab3555e84",
+  "registered_at": "2026-11-14T12:46:20.982909Z",
+  "training_config": {
+    "model": {
+      "name": "spatial_temporal_ttv_smoke",
+      "in_channels": 3,
+      "latent_channels": 64,
+      "num_frames": 8,
+      "vocab_size": 10000,
+      "max_prompt_length": 32,
+      "text_embed_dim": 128
+    },
+    "training": {
+      "device": "cuda",
+      "learning_rate": 0.001,
+      "weight_decay": 0.01,
+      "epochs": 1,
+      "batch_size": 1,
+      "gradient_accumulation_steps": 1,
+      "max_grad_norm": 1.0,
+      "seed": 42,
+      "use_lora": true,
+      "lora_rank": 8,
+      "lora_alpha": 16.0
+    },
+    "preprocessing": {
+      "height": 128,
+      "width": 128,
+      "normalize_range": [
+        -1.0,
+        1.0
+      ]
+    },
+    "paths": {
+      "dataset_manifest": "generated\\training_jobs\\train_job_20261114_124342_97d85ed7\\manifest.jsonl",
+      "train_manifest": "generated\\training_jobs\\train_job_20261114_124342_97d85ed7\\manifest.jsonl",
+      "val_manifest": "generated\\training_jobs\\train_job_20261114_124342_97d85ed7\\manifest.jsonl",
+      "checkpoint_dir": "training/checkpoints/train_job_20261114_124342_97d85ed7",
+      "models_dir": "models"
+    }
+  },
+  "metrics": {
+    "best_val_loss": 0.7028606742620468,
+    "elapsed_seconds": 137.06,
+    "final_epoch": 1
+  }
+}

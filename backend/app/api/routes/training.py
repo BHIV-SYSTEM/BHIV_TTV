@@ -659,7 +659,39 @@ async def validate_manifest_endpoint(
             default_p = settings.get_absolute_path("data/manifests/ttv_training_manifest_120.jsonl")
             raw = str(default_p) if default_p.exists() else "training/datasets/dataset.jsonl"
 
-    records, resolved_path = parse_manifest_records(raw)
-    result = validate_manifest_records(records)
-    result["manifest_path"] = resolved_path or manifest_filename
-    return ManifestValidationResponse(**result)
+    try:
+        records, resolved_path = parse_manifest_records(raw, filename=manifest_filename)
+        result = validate_manifest_records(records)
+        result["manifest_path"] = resolved_path or manifest_filename
+        if not records:
+            result["valid"] = False
+            if not result.get("issues"):
+                result["issues"] = [{
+                    "index": 0,
+                    "id": "empty_or_unrecognized_manifest",
+                    "reasons": ["No valid training samples could be identified in the uploaded file."],
+                    "sample": {}
+                }]
+            result["summary"] = "Manifest validation failed: No valid training records found."
+        return ManifestValidationResponse(**result)
+    except Exception as exc:
+        logger.error(f"Manifest validation error: {exc}", exc_info=True)
+        return ManifestValidationResponse(
+            valid=False,
+            total_records=0,
+            valid_records=0,
+            rejected_records=0,
+            splits={},
+            categories={},
+            formats={},
+            has_remote_urls=False,
+            sample_preview=[],
+            issues=[{
+                "index": 0,
+                "id": "parsing_error",
+                "reasons": [f"Manifest parsing failed: {str(exc)}"],
+                "sample": {}
+            }],
+            manifest_path=manifest_filename,
+            summary=f"Manifest parsing failed: {str(exc)}"
+        )

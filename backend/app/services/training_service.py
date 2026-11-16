@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import os
 import re
@@ -9,6 +11,7 @@ import time
 import uuid
 import subprocess
 import threading
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
@@ -67,9 +70,109 @@ def check_cuda_availability() -> Tuple[bool, str, Dict[str, Any]]:
     return False, "CUDA is not available on this system. Training video diffusion/LoRA models requires an NVIDIA GPU with CUDA drivers.", hardware_info
 
 
-def parse_manifest_records(content_or_path: Union[str, Path, bytes, List[Dict[str, Any]]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+def decode_bytes_to_text(data: bytes) -> str:
     """
-    Parses manifest records from a JSON array, JSON object with list, JSONL text, file path, or raw bytes.
+    Decodes binary data to text with intelligent fallback across common encodings.
+    Handles UTF-8 (with or without BOM), Windows-1252 / CP1252, Latin-1 / ISO-8859-1, and UTF-16.
+    Guarantees no UnicodeDecodeError is raised.
+    """
+    if not data:
+        return ""
+
+    encodings = ["utf-8-sig", "utf-8", "cp1252", "latin-1", "iso-8859-1", "utf-16", "utf-16-le", "utf-16-be"]
+    for enc in encodings:
+        try:
+            return data.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    return data.decode("utf-8", errors="replace")
+
+
+def is_zip_data(data: bytes) -> bool:
+    """Checks whether bytes start with ZIP archive magic signature (PK)."""
+    return len(data) >= 4 and data[:2] == b"PK"
+
+
+def extract_records_from_zip(zip_bytes_or_path: Union[bytes, Path, str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    Extracts manifest records from a ZIP archive.
+    Searches for manifest files (.jsonl, .json, .csv, .tsv) or auto-detects video files (.mp4, .webm, etc.) with companion .txt prompts.
+    """
+    try:
+        if isinstance(zip_bytes_or_path, bytes):
+            zf = zipfile.ZipFile(io.BytesIO(zip_bytes_or_path))
+        else:
+            zf = zipfile.ZipFile(str(zip_bytes_or_path))
+    except Exception as e:
+        logger.warning(f"Could not open ZIP archive: {e}")
+        return [], None
+
+    with zf:
+        namelist = [n for n in zf.namelist() if not n.startswith("__MACOSX/") and not Path(n).name.startswith(".")]
+
+        # 1. Search for manifest files inside archive
+        manifest_exts = (".jsonl", ".json", ".csv", ".tsv")
+        candidates = [n for n in namelist if any(n.lower().endswith(ext) for ext in manifest_exts)]
+
+        # Sort candidates to prioritize likely manifest names (manifest, dataset, metadata, train)
+        def _candidate_prio(name: str) -> int:
+            low = name.lower()
+            for i, kw in enumerate(["manifest", "dataset", "metadata", "train", "data"]):
+                if kw in low:
+                    return i
+            return 99
+
+        candidates.sort(key=_candidate_prio)
+
+        for candidate in candidates:
+            try:
+                raw_bytes = zf.read(candidate)
+                text = decode_bytes_to_text(raw_bytes)
+                records, _ = parse_manifest_text(text)
+                if records:
+                    return records, candidate
+            except Exception:
+                continue
+
+        # 2. Look for video files inside archive if no explicit manifest is present
+        video_exts = (".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v")
+        video_files = [n for n in namelist if any(n.lower().endswith(ext) for ext in video_exts)]
+        if video_files:
+            generated_records: List[Dict[str, Any]] = []
+            for idx, v_name in enumerate(video_files):
+                stem = Path(v_name).stem
+                caption = None
+                txt_candidate = str(Path(v_name).with_suffix(".txt")).replace("\\", "/")
+                if txt_candidate in namelist:
+                    try:
+                        caption = decode_bytes_to_text(zf.read(txt_candidate)).strip()
+                    except Exception:
+                        pass
+
+                if not caption:
+                    caption = stem.replace("_", " ").replace("-", " ")
+
+                generated_records.append({
+                    "id": f"zip_{idx+1:04d}_{stem}",
+                    "prompt": caption,
+                    "video_path": v_name,
+                    "split": "train",
+                    "category": "general",
+                    "format": Path(v_name).suffix.lstrip(".").lower() or "mp4"
+                })
+            return generated_records, "zip://videos"
+
+    return [], None
+
+
+def parse_manifest_records(
+    content_or_path: Union[str, Path, bytes, List[Dict[str, Any]]],
+    filename: Optional[str] = None
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    Parses manifest records from a JSON array, JSON object with list, JSONL text, CSV, ZIP archive, file path, or raw bytes.
+    Never crashes on non-UTF-8 bytes or binary archives.
     Returns (records, resolved_manifest_path).
     """
     if isinstance(content_or_path, list):
@@ -81,23 +184,49 @@ def parse_manifest_records(content_or_path: Union[str, Path, bytes, List[Dict[st
         if not p.is_absolute():
             p = settings.get_absolute_path(str(p))
         if p.exists() and p.is_file():
-            text = p.read_text(encoding="utf-8")
+            if p.suffix.lower() == ".zip":
+                records, internal_path = extract_records_from_zip(p)
+                return records, str(p.resolve()) + (f" -> {internal_path}" if internal_path else "")
+
+            raw_bytes = p.read_bytes()
+            if is_zip_data(raw_bytes):
+                records, internal_path = extract_records_from_zip(raw_bytes)
+                return records, str(p.resolve()) + (f" -> {internal_path}" if internal_path else "")
+
+            text = decode_bytes_to_text(raw_bytes)
             records, _ = parse_manifest_text(text)
             return records, str(p.resolve())
 
-    # Otherwise treat as raw text/bytes
-    text = content_or_path.decode("utf-8") if isinstance(content_or_path, bytes) else str(content_or_path)
+    # Check if raw bytes is a ZIP archive or binary
+    if isinstance(content_or_path, bytes):
+        is_zip = (filename and filename.lower().endswith(".zip")) or is_zip_data(content_or_path)
+        if is_zip:
+            records, internal_path = extract_records_from_zip(content_or_path)
+            return records, internal_path or filename or "uploaded.zip"
+
+        text = decode_bytes_to_text(content_or_path)
+        records, _ = parse_manifest_text(text)
+        return records, filename
+
+    # Otherwise treat as raw text
+    text = str(content_or_path)
     records, _ = parse_manifest_text(text)
-    return records, None
+    return records, filename
 
 
 def parse_manifest_text(text: str) -> Tuple[List[Dict[str, Any]], None]:
+    """
+    Parses manifest text supporting:
+    - Standard JSON (arrays, or dicts containing 'records', 'samples', 'videos', etc.)
+    - JSONL (newline-delimited JSON objects)
+    - Tabular CSV / TSV formats
+    """
     records: List[Dict[str, Any]] = []
     trimmed = text.strip()
     if not trimmed:
         return records, None
 
-    # Try standard JSON first
+    # 1. Try standard JSON first
     if trimmed.startswith("[") or trimmed.startswith("{"):
         try:
             data = json.loads(trimmed)
@@ -109,20 +238,66 @@ def parse_manifest_text(text: str) -> Tuple[List[Dict[str, Any]], None]:
                     if key in data and isinstance(data[key], list):
                         return data[key], None
                 # If dict itself represents a single record
-                if "prompt" in data or "id" in data:
+                if "prompt" in data or "id" in data or "caption" in data:
                     return [data], None
         except Exception:
             pass
 
-    # Fallback to JSONL line-by-line parsing
+    # 2. Try JSONL line-by-line parsing
+    jsonl_records: List[Dict[str, Any]] = []
     for line in trimmed.splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            records.append(json.loads(line))
+            parsed = json.loads(line)
+            if isinstance(parsed, dict):
+                jsonl_records.append(parsed)
         except Exception:
             pass
+
+    if jsonl_records:
+        return jsonl_records, None
+
+    # 3. Try CSV / TSV tabular parsing
+    try:
+        first_line = trimmed.splitlines()[0] if trimmed.splitlines() else ""
+        delim = "\t" if "\t" in first_line else (";" if ";" in first_line and "," not in first_line else ",")
+        reader = csv.DictReader(io.StringIO(trimmed), delimiter=delim)
+        csv_records: List[Dict[str, Any]] = []
+        for idx, row in enumerate(reader):
+            if not row:
+                continue
+            clean_row = {
+                k.strip().lower() if isinstance(k, str) else k: (v.strip() if isinstance(v, str) else v)
+                for k, v in row.items() if k is not None
+            }
+            prompt = clean_row.get("prompt") or clean_row.get("caption") or clean_row.get("text") or clean_row.get("description") or clean_row.get("title") or ""
+            video_ref = (
+                clean_row.get("video_url") or clean_row.get("video_path") or clean_row.get("source_url") or
+                clean_row.get("url") or clean_row.get("video") or clean_row.get("file_name") or
+                clean_row.get("filename") or clean_row.get("path") or ""
+            )
+            item_id = clean_row.get("id") or clean_row.get("sample_id") or clean_row.get("item_id") or f"row_{idx+1:04d}"
+            split = clean_row.get("split") or "train"
+            category = clean_row.get("category") or clean_row.get("tag") or clean_row.get("genre") or "general"
+            fmt = clean_row.get("format") or clean_row.get("ext") or "mp4"
+
+            if prompt or video_ref:
+                csv_records.append({
+                    "id": item_id,
+                    "prompt": prompt,
+                    "video_url": video_ref if video_ref.startswith(("http://", "https://")) else None,
+                    "video_path": video_ref if not video_ref.startswith(("http://", "https://")) else None,
+                    "split": split,
+                    "category": category,
+                    "format": fmt,
+                    **{k: v for k, v in clean_row.items() if k not in ("id", "prompt", "caption", "text", "description", "title", "video_url", "video_path", "source_url", "url", "video", "file_name", "filename", "path", "split", "category", "tag", "genre", "format", "ext")}
+                })
+        if csv_records:
+            return csv_records, None
+    except Exception:
+        pass
 
     return records, None
 
@@ -140,12 +315,16 @@ def validate_manifest_records(records: List[Dict[str, Any]], min_prompt_len: int
     has_remote_urls = False
 
     seen_ids = set()
-    seen_prompts = set()
 
     for idx, item in enumerate(records):
         item_id = str(item.get("id") or f"record_{idx:04d}").strip()
-        prompt = str(item.get("prompt") or item.get("caption") or "").strip()
-        video_ref = str(item.get("video_url") or item.get("video_path") or item.get("source_url") or "").strip()
+        prompt = str(
+            item.get("prompt") or item.get("caption") or item.get("text") or item.get("description") or ""
+        ).strip()
+        video_ref = str(
+            item.get("video_url") or item.get("video_path") or item.get("source_url") or
+            item.get("url") or item.get("video") or item.get("file_name") or item.get("filename") or ""
+        ).strip()
         split = str(item.get("split") or "train").strip().lower()
         category = str(item.get("category") or "general").strip().lower()
         fmt = str(item.get("format") or "mp4").strip().lower()
@@ -172,6 +351,11 @@ def validate_manifest_records(records: List[Dict[str, Any]], min_prompt_len: int
 
         if video_ref.startswith(("http://", "https://")):
             has_remote_urls = True
+            if not item.get("video_url"):
+                item["video_url"] = video_ref
+        else:
+            if not item.get("video_path"):
+                item["video_path"] = video_ref
 
         splits_count[split] = splits_count.get(split, 0) + 1
         categories_count[category] = categories_count.get(category, 0) + 1
@@ -343,12 +527,12 @@ class TrainingJobManager:
             job_id = f"train_job_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
             # 1. Parse & validate manifest records
-            records, source_path = parse_manifest_records(manifest_data)
+            records, source_path = parse_manifest_records(manifest_data, filename=manifest_filename)
             if not records and source_path:
                 # If path was passed, re-parse directly
                 p = Path(source_path)
                 if p.exists():
-                    records, _ = parse_manifest_records(p.read_text(encoding="utf-8"))
+                    records, _ = parse_manifest_records(p, filename=p.name)
 
             validation_stats = validate_manifest_records(records)
             if not validation_stats["valid"]:
