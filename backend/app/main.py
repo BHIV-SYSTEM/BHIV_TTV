@@ -73,14 +73,39 @@ generated_dir = settings.get_absolute_path("generated")
 if generated_dir.exists():
     app.mount("/generated", StaticFiles(directory=str(generated_dir)), name="generated")
 
-# Serve Frontend at Root
+# Serve Frontend at Root and Static Files
 frontend_dir = settings.get_absolute_path(settings.FRONTEND_DIR)
 if frontend_dir.exists():
     @app.get("/")
+    @app.get("/index.html")
     async def serve_index():
         index_file = frontend_dir / "index.html"
         if index_file.exists():
-            return FileResponse(str(index_file))
+            return FileResponse(str(index_file), media_type="text/html")
         return {"message": "Unified Text-to-Video API is running. Frontend index.html not found."}
 
-    app.mount("/    ", StaticFiles(directory=str(frontend_dir)), name="static")
+    @app.get("/style.css")
+    @app.get("/static/style.css")
+    async def serve_style():
+        css_file = frontend_dir / "style.css"
+        if css_file.exists():
+            return FileResponse(
+                str(css_file),
+                media_type="text/css",
+                headers={"Content-Type": "text/css; charset=utf-8"}
+            )
+        return JSONResponse(status_code=404, content={"error": "style.css not found"})
+
+    @app.get("/app.js")
+    @app.get("/static/app.js")
+    async def serve_app_js():
+        js_file = frontend_dir / "app.js"
+        if js_file.exists():
+            return FileResponse(
+                str(js_file),
+                media_type="application/javascript",
+                headers={"Content-Type": "application/javascript; charset=utf-8"}
+            )
+        return JSONResponse(status_code=404, content={"error": "app.js not found"})
+
+    app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")

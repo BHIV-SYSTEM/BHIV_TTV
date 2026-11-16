@@ -1,3 +1,4 @@
+window.__TTV_APP_LOADED__ = true;
 /**
  * TTV Studio • AI Video Generation Engine Frontend
  * Modern reactive application orchestrating generation, preview, history, models, training, and RL feedback.
