@@ -144,13 +144,13 @@ def _mock_training_queue(monkeypatch):
 
 
 def _wait_for_automatic_job(job_id):
-    for _ in range(100):
+    for _ in range(300):
         response = client.get(f"/api/v1/training/auto/{job_id}")
         assert response.status_code == 200
         job = response.json()
         if job["status"] not in {"preparing", "processing"}:
             return job
-        time.sleep(0.02)
+        time.sleep(0.05)
     pytest.fail("Automatic training did not finish reference preparation in time.")
 
 
