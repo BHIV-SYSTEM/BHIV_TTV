@@ -8,14 +8,16 @@ class JobManager:
     def __init__(self):
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._lock: Optional[asyncio.Lock] = None
+        self._bound_loop = None
 
     def _get_lock(self) -> asyncio.Lock:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
-        if self._lock is None or (loop and getattr(self._lock, "_loop", None) not in (None, loop)):
+        if self._lock is None or self._bound_loop != loop:
             self._lock = asyncio.Lock()
+            self._bound_loop = loop
         return self._lock
 
     async def create_job(

@@ -46,7 +46,7 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
     )
 
 @app.exception_handler(GovernanceViolationError)
-async def governance_exception_handler(request: Request, exc: GovernanceViolationError):
+def governance_exception_handler(request: Request, exc: GovernanceViolationError):
     msg = exc.message.lower()
     if "missing" in msg or "expired" in msg:
         return JSONResponse(

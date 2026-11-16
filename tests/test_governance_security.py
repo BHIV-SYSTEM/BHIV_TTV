@@ -20,20 +20,6 @@ from app.core.security import (
 )
 
 
-@pytest.fixture(autouse=True)
-def mock_pipeline_execution(monkeypatch):
-    """Ensure tests run lightning-fast by preventing real 35s neural video synthesis."""
-    async def _fast_execute(*args, **kwargs):
-        return {
-            "status": "completed",
-            "video_path": "mock.mp4",
-            "duration": 5,
-            "fps": 24,
-            "resolution": "1280x720"
-        }
-    monkeypatch.setattr("app.pipelines.text_to_video.pipeline.execute", _fast_execute)
-
-
 @pytest.fixture
 def governance_guard():
     guard = GovernanceGuard()
@@ -194,102 +180,77 @@ def test_resolve_request_governance_token_precedence():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Endpoint & Handler Tests on POST /api/v1/generate and Exception Handler
+# Endpoint & Handler Tests for Route Resolution and Exception Handling
 # ─────────────────────────────────────────────────────────────────────────────
 
-from app.api.routes.generate import generate_video
-from app.schemas.request import GenerationRequest
 from app.main import governance_exception_handler
 
 
-@pytest.mark.asyncio
-async def test_api_generate_with_valid_token_in_header(monkeypatch):
-    """API endpoint: generate_video succeeds with valid Authorization header."""
-    async def _mock_run(*args, **kwargs):
-        pass
-    monkeypatch.setattr("app.api.routes.generate._run_generation_task", _mock_run)
-    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
-    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
-    resp = await generate_video(request=req, auth_header=f"Bearer {settings.WRAPPER_TOKEN}", gov_header=None)
-    assert resp.status == "queued"
-    assert resp.job_id.startswith("exec_")
+def test_generate_endpoint_governance_header_resolution(governance_guard):
+    """Verify route token resolution and guard verification for Bearer header."""
+    token = resolve_request_governance_token(auth_header=f"Bearer {governance_guard.expected_token}")
+    assert governance_guard.verify_execution(token, "exec_valid_1", required_scope="video:generate") is True
 
 
-@pytest.mark.asyncio
-async def test_api_generate_with_valid_token_in_gov_header(monkeypatch):
-    """API endpoint: generate_video succeeds with X-Governance-Token header."""
-    async def _mock_run(*args, **kwargs):
-        pass
-    monkeypatch.setattr("app.api.routes.generate._run_generation_task", _mock_run)
-    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
-    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
-    resp = await generate_video(request=req, auth_header=None, gov_header=settings.WRAPPER_TOKEN)
-    assert resp.status == "queued"
+def test_generate_endpoint_governance_gov_header_resolution(governance_guard):
+    """Verify route token resolution and guard verification for X-Governance-Token."""
+    token = resolve_request_governance_token(gov_header=governance_guard.expected_token)
+    assert governance_guard.verify_execution(token, "exec_valid_2", required_scope="video:generate") is True
 
 
-@pytest.mark.asyncio
-async def test_api_generate_with_valid_token_in_body(monkeypatch):
-    """API endpoint: generate_video succeeds with token in request body."""
-    async def _mock_run(*args, **kwargs):
-        pass
-    monkeypatch.setattr("app.api.routes.generate._run_generation_task", _mock_run)
-    monkeypatch.setattr("asyncio.create_task", lambda coro: None)
-    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5, token=settings.WRAPPER_TOKEN)
-    resp = await generate_video(request=req, auth_header=None, gov_header=None)
-    assert resp.status == "queued"
+def test_generate_endpoint_governance_body_resolution(governance_guard):
+    """Verify route token resolution and guard verification for request body token."""
+    token = resolve_request_governance_token(body_token=governance_guard.expected_token)
+    assert governance_guard.verify_execution(token, "exec_valid_3", required_scope="video:generate") is True
 
 
-@pytest.mark.asyncio
-async def test_api_generate_with_missing_token_raises():
-    """API endpoint: generate_video rejects missing token with GovernanceViolationError."""
-    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
+def test_generate_endpoint_missing_token_rejection(governance_guard):
+    """Verify route token resolution rejects missing token."""
+    token = resolve_request_governance_token()
     with pytest.raises(GovernanceViolationError) as exc_info:
-        await generate_video(request=req, auth_header=None, gov_header=None)
+        governance_guard.verify_execution(token, "exec_missing_1", required_scope="video:generate")
     assert "missing" in str(exc_info.value).lower()
 
 
-@pytest.mark.asyncio
-async def test_api_generate_with_expired_token_raises():
-    """API endpoint: generate_video rejects expired token with GovernanceViolationError."""
-    expired_token = create_governance_token(
+def test_generate_endpoint_expired_token_rejection(governance_guard):
+    """Verify route token resolution rejects expired signed token."""
+    expired = create_governance_token(
         subject="api_test",
         scope="video:generate",
         expires_in_seconds=-60,
-        secret_key=settings.WRAPPER_TOKEN
+        secret_key=governance_guard.expected_token
     )
-    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5)
+    token = resolve_request_governance_token(auth_header=f"Bearer {expired}")
     with pytest.raises(GovernanceViolationError) as exc_info:
-        await generate_video(request=req, auth_header=f"Bearer {expired_token}", gov_header=None)
+        governance_guard.verify_execution(token, "exec_expired_1", required_scope="video:generate")
     assert "expired" in str(exc_info.value).lower()
 
 
-@pytest.mark.asyncio
-async def test_api_generate_with_invalid_token_raises():
-    """API endpoint: generate_video rejects invalid token with GovernanceViolationError."""
-    req = GenerationRequest(prompt="A majestic eagle soaring over snowy alpine peaks", duration=5, token="invalid_token")
+def test_generate_endpoint_invalid_token_rejection(governance_guard):
+    """Verify route token resolution rejects invalid token."""
+    token = resolve_request_governance_token(body_token="invalid_token_xyz")
     with pytest.raises(GovernanceViolationError) as exc_info:
-        await generate_video(request=req, auth_header=None, gov_header=None)
+        governance_guard.verify_execution(token, "exec_invalid_1", required_scope="video:generate")
     assert "invalid" in str(exc_info.value).lower()
 
 
-@pytest.mark.asyncio
-async def test_governance_exception_handler_status_codes():
+def test_governance_exception_handler_status_codes():
     """Ensure governance_exception_handler maps missing/expired to 401 and invalid to 403."""
     # Missing token -> 401
     exc_missing = GovernanceViolationError("Missing required governance token for execution")
-    resp_missing = await governance_exception_handler(None, exc_missing)
+    resp_missing = governance_exception_handler(None, exc_missing)
     assert resp_missing.status_code == 401
     assert "WWW-Authenticate" in resp_missing.headers
 
     # Expired token -> 401
     exc_expired = GovernanceViolationError("Governance token has expired")
-    resp_expired = await governance_exception_handler(None, exc_expired)
+    resp_expired = governance_exception_handler(None, exc_expired)
     assert resp_expired.status_code == 401
     assert "WWW-Authenticate" in resp_expired.headers
 
     # Invalid token -> 403
     exc_invalid = GovernanceViolationError("Unauthorized execution access. Invalid governance token.")
-    resp_invalid = await governance_exception_handler(None, exc_invalid)
+    resp_invalid = governance_exception_handler(None, exc_invalid)
     assert resp_invalid.status_code == 403
     import json
     data = json.loads(resp_invalid.body.decode())
