@@ -83,8 +83,28 @@ class NeuralVideoAdapter(BaseVideoAdapter):
     def _init_model(self):
         target_ckpt = self.checkpoint_path or self._find_default_checkpoint()
         if not target_ckpt or not os.path.exists(target_ckpt):
-            logger.warning(f"[NeuralVideoAdapter] No checkpoint found at '{target_ckpt}'.")
-            self.model = None
+            logger.warning(f"[NeuralVideoAdapter] No checkpoint found at '{target_ckpt}'. Initializing base SpatialTemporalTTVModel.")
+            self.model = SpatialTemporalTTVModel(
+                in_channels=3,
+                latent_channels=64,
+                num_frames=8,
+                vocab_size=10000,
+                max_prompt_length=128,
+                text_embed_dim=128
+            ).to(self.device)
+            self.model.eval()
+            self.checkpoint_info = {
+                "base_model": "SpatialTemporalTTVModel",
+                "checkpoint": "base_uninitialized",
+                "use_lora": False,
+                "lora_rank": 0,
+                "loaded_parameters": sum(p.numel() for p in self.model.parameters()),
+                "trainable_parameters": 0,
+                "device": str(self.device),
+                "latent_channels": 64,
+                "text_embed_dim": 128,
+                "num_frames": 8
+            }
             return
 
         self.checkpoint_path = target_ckpt

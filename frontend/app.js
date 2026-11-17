@@ -43,65 +43,25 @@ document.addEventListener("DOMContentLoaded", () => {
         de: ["de-DE-ConradNeural", "de-DE-KatjaNeural"]
     };
 
-    // Seed project history if empty
-    const DEFAULT_PROJECT_HISTORY = [
-        {
-            video_id: "exec_20260907_072037_090cc6ac",
-            prompt: "A small rover roaming the dunes of Mars at sunset.",
-            duration: 10,
-            resolution: "1280x720",
-            style: "cinematic",
-            model: "base",
-            video_url: "/generated/videos/exec_20260907_072037_090cc6ac.mp4",
-            created_at: Date.now() - 1000 * 60 * 120,
-            scenes: [
-                { title: "Scene 1: The Awakening Horizon", duration: 3.33, narrative: "As daylight wanes over the futuristic metropolis, a lone traveler pauses to witness the glowing horizon.", camera_motion: "pan_right" },
-                { title: "Scene 2: Through the Shining Pathways", duration: 3.33, narrative: "Every step unveils ancient secrets intertwined with soaring spires, alive with quiet energy.", camera_motion: "zoom_in" },
-                { title: "Scene 3: The Grand Discovery", duration: 3.33, narrative: "Underneath the fading sun, the true wonder of this world reveals itself in all its majesty.", camera_motion: "pan_left" }
-            ]
-        },
-        {
-            video_id: "exec_20260907_072102_5f9a7088",
-            prompt: "A neon cyberpunk cityscape with flying cars in rainy weather.",
-            duration: 15,
-            resolution: "1280x720",
-            style: "cyberpunk",
-            model: "finetuned",
-            video_url: "/generated/videos/exec_20260907_072102_5f9a7088.mp4",
-            created_at: Date.now() - 1000 * 60 * 95,
-            scenes: [
-                { title: "Scene 1: Neon Reflections", duration: 5.0, narrative: "Rain splatters against glowing billboards as synthetic lights reflect in dark streets.", camera_motion: "dolly_in" },
-                { title: "Scene 2: Cyber Traffic", duration: 5.0, narrative: "Vehicles hover and glide through misty avenues amidst towering skyscrapers.", camera_motion: "tilt_up" },
-                { title: "Scene 3: Skyline Horizon", duration: 5.0, narrative: "The camera pulls back to reveal the infinite scale of the neon metropolis.", camera_motion: "pan_right" }
-            ]
-        },
-        {
-            video_id: "exec_20260907_072207_d6031e3c",
-            prompt: "Enchanted forest with magical glowing creatures and ancient trees.",
-            duration: 15,
-            resolution: "1280x720",
-            style: "fantasy",
-            model: "base",
-            video_url: "/generated/videos/exec_20260907_072207_d6031e3c.mp4",
-            created_at: Date.now() - 1000 * 60 * 60,
-            scenes: [
-                { title: "Scene 1: Twilight Glade", duration: 5.0, narrative: "Ethereal blue light filters through moss-covered branches.", camera_motion: "pan_left" },
-                { title: "Scene 2: Luminescent Flora", duration: 5.0, narrative: "Bioluminescent blossoms open slowly to greet the evening twilight.", camera_motion: "zoom_in" },
-                { title: "Scene 3: Awakening Whispers", duration: 5.0, narrative: "Gentle forest spirits emerge and dance around the sacred grove.", camera_motion: "crane_down" }
-            ]
-        }
-    ];
+    // Project history starts clean
+    const DEFAULT_PROJECT_HISTORY = [];
 
     function getHistory() {
         try {
             const data = localStorage.getItem(STORAGE_KEY_HISTORY);
             if (!data) {
-                localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(DEFAULT_PROJECT_HISTORY));
-                return DEFAULT_PROJECT_HISTORY;
+                return [];
             }
-            return JSON.parse(data);
+            const parsed = JSON.parse(data);
+            if (!Array.isArray(parsed)) return [];
+            // Filter out legacy sample videos that cause 404s
+            const filtered = parsed.filter(item => item && item.video_id && !item.video_id.startsWith("exec_20260907_"));
+            if (filtered.length !== parsed.length) {
+                localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(filtered));
+            }
+            return filtered;
         } catch (e) {
-            return DEFAULT_PROJECT_HISTORY;
+            return [];
         }
     }
 
